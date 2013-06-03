@@ -34,6 +34,7 @@ module ccsm_comp_mod
    use shr_scam_mod,      only: shr_scam_checkSurface
    use shr_map_mod,       only: shr_map_setDopole
    use shr_mpi_mod,       only: shr_mpi_min, shr_mpi_max
+   use shr_mpi_mod,       only: shr_mpi_bcast
    use shr_mem_mod,       only: shr_mem_init, shr_mem_getusage
    use shr_cal_mod,       only: shr_cal_date2ymd
    use shr_orb_mod,       only: shr_orb_params
@@ -112,6 +113,9 @@ module ccsm_comp_mod
 #endif
    public timing_dir, mpicom_GLOID
 
+   public doensemble
+   public doensemble_t
+
 #include <mpif.h>
 
    !----------------------------------------------------------------------------
@@ -119,28 +123,66 @@ module ccsm_comp_mod
    !----------------------------------------------------------------------------
 
    !--- domain decomps (MCT Global Seg Maps) ---
-   type(mct_gsMap)  :: gsMap_aa    ! on component pes
-   type(mct_gsMap)  :: gsMap_ll
+   ! lihuimin 2012.5.13, make some vectors
+   type(mct_gsMap)  :: gsMap_aa(ANUM)    ! on component pes
+   ! lihuimin, 2012.8.11, lnd vectorized
+   type(mct_gsMap)  :: gsMap_ll(LNUM)
    type(mct_gsMap)  :: gsMap_oo
    type(mct_gsMap)  :: gsMap_ii
-   type(mct_gsMap)  :: gsMap_rr
+   ! lihuimin, 2012.9.29, rof
+   type(mct_gsMap)  :: gsMap_rr(LNUM)
    type(mct_gsMap)  :: gsMap_gg
    type(mct_gsMap)  :: gsMap_ss
 
-   type(mct_gsMap)  :: gsMap_ax    ! on cpl pes
-   type(mct_gsMap)  :: gsMap_lx
+   type(mct_gsMap)  :: gsMap_ax(ANUM)    ! on cpl pes
+   ! lihuimin, 2012.8.11, lnd vectorized
+   type(mct_gsMap)  :: gsMap_lx(LNUM)
    type(mct_gsMap)  :: gsMap_ox
    type(mct_gsMap)  :: gsMap_ix
-   type(mct_gsMap)  :: gsMap_rx
+   ! lihuimin, 2012.9.29, rof
+   type(mct_gsMap)  :: gsMap_rx(LNUM)
    type(mct_gsMap)  :: gsMap_gx
    type(mct_gsMap)  :: gsMap_sx
 
+   ! lihuimin 2011.11.4
+   !type(mct_gsMap)  :: gsMap_aa2
+   !type(mct_gsMap)  :: gsMap_ax2
+   !real(r8),pointer :: drv2mdl_aa2(:), mdl2drv_aa2(:)
+
+   ! lihuimin 2012.5.14, pointer structure of atm
+   TYPE pStruc_a
+      real(r8),pointer :: drv2mdl_aa(:)
+      real(r8),pointer :: mdl2drv_aa(:)
+   END TYPE
+   ! modi end 
+
+   ! lihuimin, 2012.8.11, pointer structure of lnd
+   TYPE pStruc_l
+      real(r8),pointer :: drv2mdl_ll(:)
+      real(r8),pointer :: mdl2drv_ll(:)
+   END TYPE
+   ! modi end
+
+   ! lihuimin, 2012.9.29, rof
+   TYPE pStruc_r
+      real(r8),pointer :: drv2mdl_rr(:)
+      real(r8),pointer :: mdl2drv_rr(:)
+   END TYPE
+   ! modi end
+
    !--- domain area correction factors (only defined on cpl pes) ---
-   real(r8),pointer :: drv2mdl_aa(:), mdl2drv_aa(:)
-   real(r8),pointer :: drv2mdl_ll(:), mdl2drv_ll(:)
+   ! lihuimin 2012.5.13, make some vectors
+   !real(r8),pointer,dimension(:,:) :: drv2mdl_aa
+   !real(r8),pointer,dimension(:,:) :: mdl2drv_aa
+   !real(r8),pointer :: drv2mdl_ll(:), mdl2drv_ll(:)
+   TYPE(pStruc_a), dimension(ANUM) :: pArray_a
+   ! lihuimin, 2012.8.11, lnd vectorized
+   TYPE(pStruc_l), dimension(LNUM) :: pArray_l
    real(r8),pointer :: drv2mdl_ii(:), mdl2drv_ii(:)
    real(r8),pointer :: drv2mdl_oo(:), mdl2drv_oo(:)
-   real(r8),pointer :: drv2mdl_rr(:), mdl2drv_rr(:)
+   ! lihuimin, 2012.9.29, rof
+   !real(r8),pointer :: drv2mdl_rr(:), mdl2drv_rr(:)
+   TYPE(pStruc_r), dimension(LNUM) :: pArray_r
    real(r8),pointer :: drv2mdl_gg(:), mdl2drv_gg(:)
    real(r8),pointer :: drv2mdl_ss(:), mdl2drv_ss(:)
 
@@ -364,6 +406,30 @@ module ccsm_comp_mod
    logical  :: iamin_CPLOCNID         ! pe associated with CPLOCNID
    logical  :: iamin_CPLGLCID         ! pe associated with CPLGLCID
 
+   ! lihuimin 2011.11.21, paras for ensemble
+   ! lihuimin 2012.5.13, make them vectors
+   integer  :: mpicom_ATMID_array(ANUM)           ! MPI atm communicator arrays
+   integer  :: mpicom_CPLATMID_array(ANUM)        ! MPI cpl-atm communicator arrays
+   logical  :: iamroot_ATMID_array(ANUM)          ! ATMID masterproc arrays
+   logical  :: iamin_ATMID_array(ANUM)            ! pe associated with ATMID arrays
+   logical  :: iamin_CPLATMID_array(ANUM)         ! pe associated with CPLATMID arrays
+   integer  :: aindex                             ! atm index
+   character(len=2) :: cStr                       ! atm string index
+   integer  :: lsize                              ! size of vect
+   ! modi end
+
+   ! lihuimin, 2012.8.11, lnd vectorized
+   integer  :: mpicom_LNDID_array(LNUM)           ! MPI lnd communicator arrays
+   integer  :: mpicom_CPLLNDID_array(LNUM)        ! MPI cpl-lnd communicator arrays
+   logical  :: iamroot_LNDID_array(LNUM)          ! LNDID masterproc arrays
+   logical  :: iamin_LNDID_array(LNUM)            ! pe associated with LNDID arrays
+   logical  :: iamin_CPLLNDID_array(LNUM)         ! pe associated with CPLLNDID arrays
+   integer  :: lindex                             ! lnd index
+   character(len=2) :: cStr_l                     ! lnd string index
+   integer  :: lsize_l
+   ! modi end
+
+
    character(CL) :: complist          ! list of comps on this pe
    integer  :: iam_GLOID              ! pe number in global id
    integer, pointer :: atm_petlist(:), lnd_petlist(:), ice_petlist(:), ocn_petlist(:), glc_petlist(:)
@@ -400,6 +466,10 @@ subroutine ccsm_pre_init()
    call mpi_init(ierr)
    call shr_mpi_chkerr(ierr,subname//' mpi_init')
  
+   ! lihuimin 2012.5.14, some variables shouble be init before seq_io_init1
+   call seq_comm_preinit()
+   ! modi end
+
    Global_Comm=MPI_COMM_WORLD
    call seq_io_init1(NLFileName, Global_Comm)
 
@@ -438,6 +508,32 @@ subroutine ccsm_pre_init()
    iamin_CPLICEID = seq_comm_iamin(CPLICEID)
    iamin_CPLOCNID = seq_comm_iamin(CPLOCNID)
    iamin_CPLGLCID = seq_comm_iamin(CPLGLCID)
+   ! lihuimin 2011.11.21, ensemble
+   !call seq_comm_setptrs(ATMID1,mpicom=mpicom_ATMID1,iamroot=iamroot_ATMID1,nthreads=nthreads_ATMID)
+   !call seq_comm_setptrs(ATMID2,mpicom=mpicom_ATMID2,iamroot=iamroot_ATMID2,nthreads=nthreads_ATMID)
+   !call seq_comm_setptrs(CPLATMID1,mpicom=mpicom_CPLATMID1,nthreads=nthreads_CPLATMID)
+   !call seq_comm_setptrs(CPLATMID2,mpicom=mpicom_CPLATMID2,nthreads=nthreads_CPLATMID)
+   !iamin_ATMID1    = seq_comm_iamin(ATMID1)
+   !iamin_ATMID2    = seq_comm_iamin(ATMID2)
+   !iamin_CPLATMID1 = seq_comm_iamin(CPLATMID1)
+   !iamin_CPLATMID2 = seq_comm_iamin(CPLATMID2)
+   ! lihuimin 2012.5.13, vectorized ensemble
+   do aindex = 1,ANUM
+      call seq_comm_setptrs(ATMID_array(aindex),mpicom=mpicom_ATMID_array(aindex),iamroot=iamroot_ATMID_array(aindex),nthreads=nthreads_ATMID)
+      call seq_comm_setptrs(CPLATMID_array(aindex),mpicom=mpicom_CPLATMID_array(aindex),nthreads=nthreads_CPLATMID)
+      iamin_ATMID_array(aindex)    = seq_comm_iamin(ATMID_array(aindex))
+      iamin_CPLATMID_array(aindex) = seq_comm_iamin(CPLATMID_array(aindex))
+   enddo
+   ! modi end
+   ! 2012.8.11, lnd vectorized
+   do lindex = 1,LNUM
+      call seq_comm_setptrs(LNDID_array(lindex),mpicom=mpicom_LNDID_array(lindex),iamroot=iamroot_LNDID_array(lindex),nthreads=nthreads_LNDID)
+      call seq_comm_setptrs(CPLLNDID_array(lindex),mpicom=mpicom_CPLLNDID_array(lindex),nthreads=nthreads_CPLLNDID)
+      iamin_LNDID_array(lindex)    = seq_comm_iamin(LNDID_array(lindex))
+      iamin_CPLLNDID_array(lindex) = seq_comm_iamin(CPLLNDID_array(lindex))
+   enddo
+   ! modi end
+
 
    complist = " "
    if (iamin_CPLID) complist = trim(complist)//' cpl'
@@ -446,6 +542,22 @@ subroutine ccsm_pre_init()
    if (iamin_LNDID) complist = trim(complist)//' lnd'
    if (iamin_ICEID) complist = trim(complist)//' ice'
    if (iamin_GLCID) complist = trim(complist)//' glc'
+   ! lihuimin 2011.11.21, add'l
+   !if (iamin_ATMID1) complist = trim(complist)//' atm1'
+   !if (iamin_ATMID2) complist = trim(complist)//' atm2'
+   ! lihuimin 2012.5.12, vectorized
+   do aindex = 1,ANUM
+     write(cStr,'(i2)') aindex
+     if (iamin_ATMID_array(aindex)) complist = trim(complist)//' atm'//cStr
+   enddo
+   ! modi end
+   ! lihuimin, 2012.8.11, lnd vectorized
+   do lindex = 1,LNUM
+     write(cStr_l,'(i2)') lindex
+     if (iamin_LNDID_array(lindex)) complist = trim(complist)//' lnd'//cStr_l
+   enddo
+   ! modi end
+
 
    !--------------------------------------------------------------------------
    ! Set logging parameters both for shr code and locally
@@ -464,6 +576,7 @@ subroutine ccsm_pre_init()
       loglevel = 0
       call shr_file_setLogLevel(loglevel)
    endif
+
 
    !--------------------------------------------------------------------------
    ! Log info about the environment settings
@@ -596,17 +709,55 @@ subroutine ccsm_init()
    ! though other data may be invalid
    !-----------------------------------------------------------------------------
 
-   call seq_cdata_init(cdata_ax, CPLID, dom_ax, gsMap_ax, infodata, 'cdata_ax' )
-   call seq_cdata_init(cdata_lx, CPLID, dom_lx, gsMap_lx, infodata, 'cdata_lx' )
-   call seq_cdata_init(cdata_rx, CPLID, dom_rx, gsMap_rx, infodata, 'cdata_rx' )
+   !call seq_cdata_init(cdata_ax, CPLID, dom_ax, gsMap_ax, infodata, 'cdata_ax' )
+   ! lihuimin 2011.11.4
+   !call seq_cdata_init(cdata_ax2, CPLID, dom_ax2, gsMap_ax2, infodata, 'cdata_ax2')
+   ! modi end
+   ! lihuimin 2012.5.13, vectorized
+   do aindex = 1,ANUM
+      write(cStr,'(i2)') aindex
+      call seq_cdata_init(cdata_ax(aindex), CPLID, dom_ax(aindex), gsMap_ax(aindex), infodata, 'cdata_ax'//cStr )
+   enddo
+   ! modi end
+   ! lihuimin, 2012.8.11, lnd vectorized
+   ! lihuimin, 2012.9.29, rof
+   do lindex = 1,LNUM
+      write(cStr_l,'(i2)') lindex
+      call seq_cdata_init(cdata_lx(lindex), CPLID, dom_lx(lindex), gsMap_lx(lindex), infodata, 'cdata_lx'//cStr_l )
+      call seq_cdata_init(cdata_rx(lindex), CPLID, dom_rx(lindex), gsMap_rx(lindex), infodata, 'cdata_rx'//cStr_l )
+   enddo
+   ! modi end
+   !call seq_cdata_init(cdata_lx, CPLID, dom_lx, gsMap_lx, infodata, 'cdata_lx' )
+   ! lihuimin, 2012.8.11, TODO, consider cdata_rx & cdata_sx
+   !call seq_cdata_init(cdata_rx, CPLID, dom_rx, gsMap_rx, infodata, 'cdata_rx' )
    call seq_cdata_init(cdata_ix, CPLID, dom_ix, gsMap_ix, infodata, 'cdata_ix' )
    call seq_cdata_init(cdata_ox, CPLID, dom_ox, gsMap_ox, infodata, 'cdata_ox' )
    call seq_cdata_init(cdata_gx, CPLID, dom_gx, gsMap_gx, infodata, 'cdata_gx' )
    call seq_cdata_init(cdata_sx, CPLID, dom_sx, gsMap_sx, infodata, 'cdata_sx' )
 
-   call seq_cdata_init(cdata_aa, ATMID, dom_aa, gsMap_aa, infodata, 'cdata_aa')
-   call seq_cdata_init(cdata_ll, LNDID, dom_ll, gsMap_ll, infodata, 'cdata_ll')
-   call seq_cdata_init(cdata_rr, LNDID, dom_rr, gsMap_rr, infodata, 'cdata_rr')
+   ! lihuimin 2011.11.18 atm1 atm2 comm
+   !call seq_cdata_init(cdata_aa, ATMID1, dom_aa, gsMap_aa, infodata, 'cdata_aa')
+   !cdata_aa%mpicom = mpicom_atm1
+   !call seq_cdata_init(cdata_aa2, ATMID2, dom_aa2, gsMap_aa2, infodata, 'cdata_aa2')
+   !cdata_aa2%mpicom = mpicom_atm2
+   ! modi end
+   ! lihuimin 2012.5.13, vectorized
+   do aindex = 1,ANUM
+      write(cStr,'(i2)') aindex
+      call seq_cdata_init(cdata_aa(aindex), ATMID_array(aindex), dom_aa(aindex), gsMap_aa(aindex), infodata, 'cdata_aa'//cStr)
+   enddo
+   ! modi end
+   ! lihuimin, 2012.8.11, lnd vectorized
+   ! lihuimin, 2012.9.29, rof
+   do lindex = 1,LNUM
+      write(cStr_l,'(i2)') lindex
+      call seq_cdata_init(cdata_ll(lindex), LNDID_array(lindex), dom_ll(lindex), gsMap_ll(lindex), infodata, 'cdata_ll'//cStr_l)
+      call seq_cdata_init(cdata_rr(lindex), LNDID_array(lindex), dom_rr(lindex), gsMap_rr(lindex), infodata, 'cdata_rr'//cStr_l)
+   enddo
+   ! modi end
+   !call seq_cdata_init(cdata_ll, LNDID, dom_ll, gsMap_ll, infodata, 'cdata_ll')
+   ! lihuimin, 2012.8.11, TODO, consider cdata_rr & cdata_ss
+   !call seq_cdata_init(cdata_rr, LNDID_array(1), dom_rr, gsMap_rr, infodata, 'cdata_rr')
    call seq_cdata_init(cdata_ss, LNDID, dom_ss, gsMap_ss, infodata, 'cdata_ss')
    call seq_cdata_init(cdata_ii, ICEID, dom_ii, gsMap_ii, infodata, 'cdata_ii')
    call seq_cdata_init(cdata_oo, OCNID, dom_oo, gsMap_oo, infodata, 'cdata_oo')
@@ -616,6 +767,7 @@ subroutine ccsm_init()
    ! Initialize time manager
    !-----------------------------------------------------------------------------
 
+   ! lihuimin Eclock_a is not needed to be maintained two copies
    call seq_timemgr_clockInit(seq_SyncClock,nlfilename,read_restart,rest_file,mpicom_gloid, &
       EClock_d, EClock_a, EClock_l, EClock_o, EClock_i, Eclock_g)
    if (iamroot_CPLID) then
@@ -681,7 +833,23 @@ subroutine ccsm_init()
       if (seq_comm_iamroot(ATMID)) write(logunit,F00) 'Initialize atm component'
       call shr_sys_flush(logunit)
       if (drv_threading) call seq_comm_setnthreads(nthreads_ATMID)
-      call atm_init_mct( EClock_a, cdata_aa, x2a_aa, a2x_aa, NLFilename=NLFilename )
+      ! lihuimin 2011.11.7 @Columbia process split
+      ! need to gather data from the other atm coms  <-- wrong
+      !if (iamin_ATMID1) then
+      !   call atm_init_mct( EClock_a, cdata_aa, x2a_aa, a2x_aa, 1, NLFilename=NLFilename)
+      !else ! iamin_ATMID2
+         ! lihuimin 2011.11.4
+      !   call atm_init_mct( EClock_a, cdata_aa2, x2a_aa2, a2x_aa2, 2, NLFilename=NLFilename)
+         ! modi end
+      !endif
+      ! modi end
+      ! lihuimin 2012.5.13, @Beijing, vectorized
+      do aindex = 1,ANUM
+         if (iamin_ATMID_array(aindex)) then
+            call atm_init_mct( EClock_a, cdata_aa(aindex), x2a_aa(aindex), a2x_aa(aindex), aindex, NLFilename=NLFilename)
+         endif
+      enddo
+      ! modi end
       if (drv_threading) call seq_comm_setnthreads(nthreads_GLOID)
    endif
    if (iamin_CPLATMID) then
@@ -699,9 +867,37 @@ subroutine ccsm_init()
       if (drv_threading) call seq_comm_setnthreads(nthreads_LNDID)
       if (seq_comm_iamroot(LNDID)) write(logunit,F00) 'Initialize lnd component'
       call shr_sys_flush(logunit)
-      call lnd_init_mct( EClock_l, cdata_ll, x2l_ll, l2x_ll, &
-                                   cdata_rr,         r2x_rr, &
-                                   cdata_ss, x2s_ss, s2x_ss, NLFilename=NLFilename )
+      ! lihuimin 2012.5.13, vectorized
+      ! lihuimin, 2012.8.11, multi lnd
+      ! lihuimin, 2012.8.17, make it right
+      ! lihuimin, 2012.9.29, rof
+      if (multilnd) then
+         do lindex = 1,LNUM
+            if (iamin_LNDID_array(lindex)) then
+               call lnd_init_mct( EClock_l, cdata_ll(lindex), x2l_ll(lindex), l2x_ll(lindex), &
+                                            cdata_rr(lindex),                 r2x_rr(lindex), &
+                                            cdata_ss, x2s_ss, s2x_ss, lindex, NLFilename, &
+                                            mpicom_LNDID_array(lindex), LNDID_array(lindex) )
+            endif
+         enddo
+      else
+      ! lihuimin 2011.11.14 initialize x2l_ll2
+      ! lihuimin 2012.5.13, vectorized
+      ! remain this part, although ungly.
+      ! lihuimin, 2012.9.29, rof
+      ! lihuimin, 2012,12,28, for multilnd
+         lindex = 1
+         call lnd_init_mct( EClock_l, cdata_ll(lindex), x2l_ll(lindex), l2x_ll(lindex), &
+                                      cdata_rr(lindex),                 r2x_rr(lindex), &
+                                      cdata_ss, x2s_ss, s2x_ss, lindex, NLFilename, &
+                                      mpicom_LNDID_array(lindex), LNDID_array(lindex) )
+         lsize = mct_gsMap_lsize(cdata_ll(1)%gsMap, mpicom_LNDID)
+         do aindex = 2,ANUM
+            call mct_aVect_init(x2l_ll(aindex), rList=seq_flds_x2l_fields, lsize=lsize)
+            call mct_aVect_zero(x2l_ll(aindex))
+         enddo
+      ! modi end
+      endif
       if (drv_threading) call seq_comm_setnthreads(nthreads_GLOID)
     endif
    if (iamin_CPLLNDID) then
@@ -719,7 +915,16 @@ subroutine ccsm_init()
       if (drv_threading) call seq_comm_setnthreads(nthreads_OCNID)
       if (seq_comm_iamroot(OCNID)) write(logunit,F00) 'Initialize ocn component'
       call shr_sys_flush(logunit)
-      call ocn_init_mct( EClock_o, cdata_oo, x2o_oo, o2x_oo, NLFilename=NLFilename )
+      ! lihuimin 2012.5.13, vectorize
+      call ocn_init_mct( EClock_o, cdata_oo, x2o_oo(1), o2x_oo, NLFilename=NLFilename )
+      ! lihuimin 2011.11.14 initialize x2o_oo2
+      ! lihuimin 2012.5.13, vectorize
+      lsize = mct_gsMap_lsize(cdata_oo%gsMap, mpicom_OCNID)
+      do aindex = 2,ANUM
+         call mct_aVect_init(x2o_oo(aindex), rList=seq_flds_x2o_fields, lsize=lsize)
+         call mct_aVect_zero(x2o_oo(aindex))
+      enddo
+      ! modi end
       if (drv_threading) call seq_comm_setnthreads(nthreads_GLOID)
    endif
    if (iamin_CPLOCNID) then
@@ -737,7 +942,16 @@ subroutine ccsm_init()
       if (drv_threading) call seq_comm_setnthreads(nthreads_ICEID)
       if (seq_comm_iamroot(ICEID)) write(logunit,F00) 'Initialize ice component'
       call shr_sys_flush(logunit)
-      call ice_init_mct( EClock_i, cdata_ii, x2i_ii, i2x_ii, NLFilename=NLFilename )
+      ! lihuimin 2012.5.13, vectorize
+      call ice_init_mct( EClock_i, cdata_ii, x2i_ii(1), i2x_ii, NLFilename=NLFilename )
+      ! lihuimin 2011.11.14 initialize x2i_ii2
+      ! lihuimin 2012.5.13, vectorize
+      lsize = mct_gsMap_lsize(cdata_ii%gsMap, mpicom_ICEID)
+      do aindex = 2,ANUM
+         call mct_aVect_init(x2i_ii(aindex), rList=seq_flds_x2i_fields, lsize=lsize)
+         call mct_aVect_zero(x2i_ii(aindex))
+      enddo
+      ! modi end
       if (drv_threading) call seq_comm_setnthreads(nthreads_GLOID)
    endif
    if (iamin_CPLICEID) then
@@ -920,32 +1134,67 @@ subroutine ccsm_init()
    !-----------------------------------------------------------------------------
 
    if (iamin_ATMID .and. atm_present) then
-      if (drv_threading) call seq_comm_setnthreads(nthreads_ATMID)
-      k1 = mct_aVect_indexRa(cdata_aa%dom%data,"area"  ,perrWith='aa area ')
-      k2 = mct_aVect_indexRa(cdata_aa%dom%data,"aream" ,perrWith='aa aream')
-      k3 = mct_aVect_indexRa(cdata_aa%dom%data,"ascale",perrWith='aa ascale')
-      cdata_aa%dom%data%rAttr(k2,:) = cdata_aa%dom%data%rAttr(k1,:)
-      cdata_aa%dom%data%rAttr(k3,:) = 1.0_r8
+      ! lihuimin 2011.11.21
+      !if (iamin_ATMID1) then
+      !   if (drv_threading) call seq_comm_setnthreads(nthreads_ATMID)
+      !   k1 = mct_aVect_indexRa(cdata_aa%dom%data,"area"  ,perrWith='aa area ')
+      !   k2 = mct_aVect_indexRa(cdata_aa%dom%data,"aream" ,perrWith='aa aream')
+      !   k3 = mct_aVect_indexRa(cdata_aa%dom%data,"ascale",perrWith='aa ascale')
+      !   cdata_aa%dom%data%rAttr(k2,:) = cdata_aa%dom%data%rAttr(k1,:)
+      !   cdata_aa%dom%data%rAttr(k3,:) = 1.0_r8
+      !else ! iamin_ATMID2
+      !   ! lihuimin 2011.11.4
+      !   k1 = mct_aVect_indexRa(cdata_aa2%dom%data,"area"  ,perrWith='aa area ')
+      !   k2 = mct_aVect_indexRa(cdata_aa2%dom%data,"aream" ,perrWith='aa aream')
+      !   k3 = mct_aVect_indexRa(cdata_aa2%dom%data,"ascale",perrWith='aa ascale')
+      !   cdata_aa2%dom%data%rAttr(k2,:) = cdata_aa2%dom%data%rAttr(k1,:)
+      !   cdata_aa2%dom%data%rAttr(k3,:) = 1.0_r8
+      !   ! modi end
+      !endif
+      ! lihuimin 2012.5.13, vectorize
+      do aindex = 1,ANUM
+         if (iamin_ATMID_array(aindex)) then
+            if (drv_threading) call seq_comm_setnthreads(nthreads_ATMID)
+            k1 = mct_aVect_indexRa(cdata_aa(aindex)%dom%data,"area"  ,perrWith='aa area ')
+            k2 = mct_aVect_indexRa(cdata_aa(aindex)%dom%data,"aream" ,perrWith='aa aream')
+            k3 = mct_aVect_indexRa(cdata_aa(aindex)%dom%data,"ascale",perrWith='aa ascale')
+            cdata_aa(aindex)%dom%data%rAttr(k2,:) = cdata_aa(aindex)%dom%data%rAttr(k1,:)
+            cdata_aa(aindex)%dom%data%rAttr(k3,:) = 1.0_r8
+         endif
+      enddo
+      ! modi end
       if (drv_threading) call seq_comm_setnthreads(nthreads_GLOID)
    endif
 
    if (iamin_LNDID .and. lnd_present) then
-      if (drv_threading) call seq_comm_setnthreads(nthreads_LNDID)
-      k1 = mct_aVect_indexRa(cdata_ll%dom%data,"area"  ,perrWith='ll area ')
-      k2 = mct_aVect_indexRa(cdata_ll%dom%data,"aream" ,perrWith='ll aream')
-      k3 = mct_aVect_indexRa(cdata_ll%dom%data,"ascale",perrWith='ll ascale')
-      cdata_ll%dom%data%rAttr(k2,:) = cdata_ll%dom%data%rAttr(k1,:)
-      cdata_ll%dom%data%rAttr(k3,:) = 1.0_r8
+      ! lihuimin, 2012.8.11, lnd vectorized
+      do lindex = 1,LNUM
+         if (iamin_LNDID_array(lindex)) then
+            if (drv_threading) call seq_comm_setnthreads(nthreads_LNDID) ! I just dont want to change this stupid error..
+            k1 = mct_aVect_indexRa(cdata_ll(lindex)%dom%data,"area"  ,perrWith='ll area ')
+            k2 = mct_aVect_indexRa(cdata_ll(lindex)%dom%data,"aream" ,perrWith='ll aream')
+            k3 = mct_aVect_indexRa(cdata_ll(lindex)%dom%data,"ascale",perrWith='ll ascale')
+            cdata_ll(lindex)%dom%data%rAttr(k2,:) = cdata_ll(lindex)%dom%data%rAttr(k1,:)
+            cdata_ll(lindex)%dom%data%rAttr(k3,:) = 1.0_r8
+         endif
+      enddo
+      ! modi end
       if (drv_threading) call seq_comm_setnthreads(nthreads_GLOID)
    endif
 
    if (iamin_LNDID .and. rof_present) then
-      if (drv_threading) call seq_comm_setnthreads(nthreads_LNDID)
-      k1 = mct_aVect_indexRa(cdata_rr%dom%data,"area"  ,perrWith='rr area ')
-      k2 = mct_aVect_indexRa(cdata_rr%dom%data,"aream" ,perrWith='rr aream')
-      k3 = mct_aVect_indexRa(cdata_rr%dom%data,"ascale",perrWith='rr ascale')
-      cdata_rr%dom%data%rAttr(k2,:) = cdata_rr%dom%data%rAttr(k1,:)
-      cdata_rr%dom%data%rAttr(k3,:) = 1.0_r8
+      ! lihuimin, 2012.9.29, rof
+      do lindex = 1,LNUM
+         if (iamin_LNDID_array(lindex)) then
+            if (drv_threading) call seq_comm_setnthreads(nthreads_LNDID)
+            k1 = mct_aVect_indexRa(cdata_rr(lindex)%dom%data,"area"  ,perrWith='rr area ')
+            k2 = mct_aVect_indexRa(cdata_rr(lindex)%dom%data,"aream" ,perrWith='rr aream')
+            k3 = mct_aVect_indexRa(cdata_rr(lindex)%dom%data,"ascale",perrWith='rr ascale')
+            cdata_rr(lindex)%dom%data%rAttr(k2,:) = cdata_rr(lindex)%dom%data%rAttr(k1,:)
+            cdata_rr(lindex)%dom%data%rAttr(k3,:) = 1.0_r8
+         endif
+      enddo
+      ! modi end
       if (drv_threading) call seq_comm_setnthreads(nthreads_GLOID)
    endif
 
@@ -997,39 +1246,123 @@ subroutine ccsm_init()
    call t_startf('driver_init_xxx2xxx')
 
    if (iamin_CPLATMID .and. atm_present) then
-      call map_atm2atm_init_mct(cdata_aa, x2a_aa, a2x_aa, ATMID, &
-                                cdata_ax, x2a_ax, a2x_ax, CPLID, CPLATMID)
-      call mct_avect_zero(x2a_aa)
-      call map_atma2atmx_mct(cdata_aa, x2a_aa, cdata_ax, x2a_ax)
+      ! lihuimin TO_DO judge mpicom, split the code route
+      ! atmid2+cplid and atmid1+cplid
+      ! handle cdata ID before please
+      !if (iamin_CPLATMID1) then
+      !   call map_atm2atm_init_mct(cdata_aa, x2a_aa, a2x_aa, ATMID1, &
+      !                             cdata_ax, x2a_ax, a2x_ax, CPLID, CPLATMID1)
+      !   ! lihuimin 2011.11.18, TO_DO, below should be done in all pes
+      !   call mct_avect_zero(x2a_aa)
+      !   call map_atma2atmx_mct(cdata_aa, x2a_aa, cdata_ax, x2a_ax)
+      !endif
+      !if (iamin_CPLATMID2) then
+      !   ! lihuimin 2011.11.4
+      !   call map_atm2atm_init_mct(cdata_aa2, x2a_aa2, a2x_aa2, ATMID2, &
+      !                             cdata_ax2, x2a_ax2, a2x_ax2, CPLID, CPLATMID2)
+      !   call mct_avect_zero(x2a_aa2)
+      !   call map_atma2atmx_mct(cdata_aa2, x2a_aa2, cdata_ax2, x2a_ax2)
+      !   ! modi end
+      !endif
+      ! lihuimin 2012.5.13, vectorize
+      do aindex = 1,ANUM
+         if (iamin_CPLATMID_array(aindex)) then
+            call map_atm2atm_init_mct(cdata_aa(aindex), x2a_aa(aindex), a2x_aa(aindex), ATMID_array(aindex), &
+                                      cdata_ax(aindex), x2a_ax(aindex), a2x_ax(aindex), CPLID, CPLATMID_array(aindex))
+            call mct_avect_zero(x2a_aa(aindex))
+            call map_atma2atmx_mct(cdata_aa(aindex), x2a_aa(aindex), cdata_ax(aindex), x2a_ax(aindex))
+         endif
+      enddo
+      ! modi end
    endif
 
+
    if (iamin_CPLLNDID .and. lnd_present) then
-      call map_lnd2lnd_init_mct(cdata_ll, x2l_ll, l2x_ll, LNDID, &
-                                cdata_lx, x2l_lx, l2x_lx, CPLID, CPLLNDID)
-      call mct_avect_zero(x2l_ll)
-      call map_lndl2lndx_mct(cdata_ll, x2l_ll, cdata_lx, x2l_lx)
+      !call map_lnd2lnd_init_mct(cdata_ll, x2l_ll, l2x_ll, LNDID, &
+      !                          cdata_lx, x2l_lx, l2x_lx, CPLID, CPLLNDID)
+      !call mct_avect_zero(x2l_ll)
+      !call map_lndl2lndx_mct(cdata_ll, x2l_ll, cdata_lx, x2l_lx)
+      ! lihuimin 2011.11.6, 2011.11.18 TO_DO, consider use avect copy instead of calling funcs
+      !call map_lnd2lnd_init_mct(cdata_ll, x2l_ll2, l2x_ll, LNDID, &
+      !                          cdata_lx, x2l_lx2, l2x_lx, CPLID, CPLLNDID)
+      !call mct_avect_zero(x2l_ll2)
+      !call map_lndl2lndx_mct(cdata_ll, x2l_ll2, cdata_lx, x2l_lx2)
+      ! modi end
+      ! lihuimin, 2012.8.12, judge if multilnd
+      ! actually, LNUM equals ANUM when multilnd
+      if (multilnd) then
+         do lindex = 1,LNUM
+            if (iamin_CPLLNDID_array(lindex)) then
+               call map_lnd2lnd_init_mct(cdata_ll(lindex), x2l_ll(lindex), l2x_ll(lindex), LNDID_array(lindex), &
+                                         cdata_lx(lindex), x2l_lx(lindex), l2x_lx(lindex), CPLID, CPLLNDID_array(lindex))
+               call mct_avect_zero(x2l_ll(lindex))
+               call map_lndl2lndx_mct(cdata_ll(lindex), x2l_ll(lindex), cdata_lx(lindex), x2l_lx(lindex))
+            endif
+         enddo
+      else
+         ! lihuimin 2012.5.13, vectorize
+         do aindex = 1,ANUM
+            call map_lnd2lnd_init_mct(cdata_ll(1), x2l_ll(aindex), l2x_ll(1), LNDID_array(1), &
+                                      cdata_lx(1), x2l_lx(aindex), l2x_lx(1), CPLID, CPLLNDID_array(1))
+            call mct_avect_zero(x2l_ll(aindex))
+            call map_lndl2lndx_mct(cdata_ll(1), x2l_ll(aindex), cdata_lx(1), x2l_lx(aindex))
+         enddo
+         ! modi end
+      endif
+      ! modi
    endif
 
    if (iamin_CPLLNDID .and. rof_present) then
-      call map_rof2rof_init_mct(cdata_rr,         r2x_rr, LNDID, &
-                                cdata_rx,         r2x_rx, CPLID, CPLLNDID)
-      call mct_avect_init(r2xacc_rx%data, r2x_rx, mct_aVect_lsize(r2x_rx))
-      call mct_accum_zero(r2xacc_rx)
+      ! lihuimin, 2012.9.29, rof
+      if (multilnd) then
+         do lindex = 1,LNUM
+            if (iamin_CPLLNDID_array(lindex)) then
+               call map_rof2rof_init_mct(cdata_rr(lindex),         r2x_rr(lindex), LNDID_array(lindex), &
+                                         cdata_rx(lindex),         r2x_rx(lindex), CPLID, CPLLNDID_array(lindex))
+               call mct_avect_init(r2xacc_rx(lindex)%data, r2x_rx(lindex), mct_aVect_lsize(r2x_rx(lindex)))
+               call mct_accum_zero(r2xacc_rx(lindex))
+            endif
+         enddo
+      else
+         call map_rof2rof_init_mct(cdata_rr(1),         r2x_rr(1), LNDID_array(1), &
+                                   cdata_rx(1),         r2x_rx(1), CPLID, CPLLNDID_array(1))
+         call mct_avect_init(r2xacc_rx(1)%data, r2x_rx(1), mct_aVect_lsize(r2x_rx(1)))
+         call mct_accum_zero(r2xacc_rx(1))
+      endif
+      ! modi end
       r2xacc_rx_cnt = 0
    endif
 
    if (iamin_CPLLNDID .and. sno_present) then
+      write(6,*) "IN SNO, ########  1"
       call map_sno2sno_init_mct(cdata_ss, x2s_ss, s2x_ss, LNDID, &
                                 cdata_sx, x2s_sx, s2x_sx, CPLID, CPLLNDID)
+      write(6,*) "IN SNO, ########  2"
       call mct_avect_zero(x2s_ss)
+      write(6,*) "IN SNO, ########  3"
       call map_snos2snox_mct(cdata_ss, x2s_ss, cdata_sx, x2s_sx)
+      write(6,*) "IN SNO, ########  4"
    endif
 
    if (iamin_CPLICEID .and. ice_present) then
-      call map_ice2ice_init_mct(cdata_ii, x2i_ii, i2x_ii, ICEID, &
-                                cdata_ix, x2i_ix, i2x_ix, CPLID, CPLICEID)
-      call mct_avect_zero(x2i_ii)
-      call map_icei2icex_mct(cdata_ii, x2i_ii, cdata_ix, x2i_ix)
+      !call map_ice2ice_init_mct(cdata_ii, x2i_ii, i2x_ii, ICEID, &
+      !                          cdata_ix, x2i_ix, i2x_ix, CPLID, CPLICEID)
+      !call mct_avect_zero(x2i_ii)
+      !call map_icei2icex_mct(cdata_ii, x2i_ii, cdata_ix, x2i_ix)
+      !! lihuimin 2011.11.6
+      !call map_ice2ice_init_mct(cdata_ii, x2i_ii2, i2x_ii, ICEID, &
+      !                          cdata_ix, x2i_ix2, i2x_ix, CPLID, CPLICEID)
+      !call mct_avect_zero(x2i_ii2)
+      !call map_icei2icex_mct(cdata_ii, x2i_ii2, cdata_ix, x2i_ix2)
+      !! modi end
+      !! lihuimin 2012.5.13, vectorize
+      do aindex = 1,ANUM
+         call map_ice2ice_init_mct(cdata_ii, x2i_ii(aindex), i2x_ii, ICEID, &
+                                   cdata_ix, x2i_ix(aindex), i2x_ix, CPLID, CPLICEID)
+         call mct_avect_zero(x2i_ii(aindex))
+         call map_icei2icex_mct(cdata_ii, x2i_ii(aindex), cdata_ix, x2i_ix(aindex))
+      enddo
+      ! modi end
    endif
 
    if (iamin_CPLGLCID .and. glc_present) then
@@ -1040,13 +1373,34 @@ subroutine ccsm_init()
    endif
 
    if (iamin_CPLOCNID .and. ocn_present) then
-      call map_ocn2ocn_init_mct(cdata_oo, x2o_oo, o2x_oo, OCNID, &
-                                cdata_ox, x2o_ox, o2x_ox, CPLID, CPLOCNID)
-      call mct_avect_zero(x2o_oo)
-      call map_ocno2ocnx_mct(cdata_oo, x2o_oo, cdata_ox, x2o_ox)
-!      call mct_accum_init(x2oacc_ox, x2o_ox)
-      call mct_avect_init(x2oacc_ox%data, x2o_ox, mct_aVect_lsize(x2o_ox))
-      call mct_accum_zero(x2oacc_ox)
+      !call map_ocn2ocn_init_mct(cdata_oo, x2o_oo, o2x_oo, OCNID, &
+      !                          cdata_ox, x2o_ox, o2x_ox, CPLID, CPLOCNID)
+      !call mct_avect_zero(x2o_oo)
+      !call map_ocno2ocnx_mct(cdata_oo, x2o_oo, cdata_ox, x2o_ox)
+!     ! call mct_accum_init(x2oacc_ox, x2o_ox)
+      !call mct_avect_init(x2oacc_ox%data, x2o_ox, mct_aVect_lsize(x2o_ox))
+      !call mct_accum_zero(x2oacc_ox)
+      !! lihuimin 2011.11.6
+      !call map_ocn2ocn_init_mct(cdata_oo, x2o_oo2, o2x_oo, OCNID, &
+      !                          cdata_ox, x2o_ox2, o2x_ox, CPLID, CPLOCNID)
+      !call mct_avect_zero(x2o_oo2)
+      !call map_ocno2ocnx_mct(cdata_oo, x2o_oo2, cdata_ox, x2o_ox2)
+!     ! call mct_accum_init(x2oacc_ox, x2o_ox)
+      !call mct_avect_init(x2oacc_ox2%data, x2o_ox2, mct_aVect_lsize(x2o_ox2))
+      !call mct_accum_zero(x2oacc_ox2)
+      !! modi end
+      ! lihuimin 2012.5.13, vectorize
+      do aindex = 1,ANUM
+         call map_ocn2ocn_init_mct(cdata_oo, x2o_oo(aindex), o2x_oo, OCNID, &
+                                   cdata_ox, x2o_ox(aindex), o2x_ox, CPLID, CPLOCNID)
+         call mct_avect_zero(x2o_oo(aindex))
+         call map_ocno2ocnx_mct(cdata_oo, x2o_oo(aindex), cdata_ox, x2o_ox(aindex))
+  !      call mct_accum_init(x2oacc_ox, x2o_ox)
+         call mct_avect_init(x2oacc_ox(aindex)%data, x2o_ox(aindex), mct_aVect_lsize(x2o_ox(aindex)))
+         call mct_accum_zero(x2oacc_ox(aindex))
+      enddo
+      ! modi end
+      ! lihuimin let x2oacc_ox and x2oacc_ox2 share the same x2oacc_ox_cnt
       x2oacc_ox_cnt = 0
    endif
 
@@ -1056,6 +1410,7 @@ subroutine ccsm_init()
    ! Remainder of initialization
    !-----------------------------------------------------------------------------
 
+
    if (iamin_CPLID) then
       if (drv_threading) call seq_comm_setnthreads(nthreads_CPLID)
 
@@ -1064,10 +1419,64 @@ subroutine ccsm_init()
       !-----------------------------------------------------------------------------
 
       if ( seq_comm_iamroot(CPLID)) write(logunit,F00) 'Initializing merge components'
-                       call mrg_x2a_init_mct( cdata_ax, l2x_ax, o2x_ax, i2x_ax, xao_ax )
-      if (ice_present) call mrg_x2i_init_mct( cdata_ix, a2x_ix, o2x_ix )
-      if (ocn_present) call mrg_x2o_init_mct( cdata_ox, a2x_ox, i2x_ox, r2x_ox )
-      if (lnd_present) call mrg_x2l_init_mct( cdata_lx, a2x_lx) 
+
+                       ! lihuimin 2011.11.18, TO_DO, size of cdata_ax%gsMap influence the result
+                       !call mrg_x2a_init_mct( cdata_ax, l2x_ax, o2x_ax, i2x_ax, xao_ax )
+                       ! lihuimin 2011.11.4
+                       !call mrg_x2a_init_mct( cdata_ax2, l2x_ax2, o2x_ax2, i2x_ax2, xao_ax2 )
+                       ! modi end
+                       ! lihuimin 2012.5.13, vectorize
+                       do aindex = 1,ANUM
+                          call mrg_x2a_init_mct( cdata_ax(aindex), l2x_ax(aindex), o2x_ax(aindex), i2x_ax(aindex), xao_ax(aindex) )
+                       enddo
+                       ! modi end
+
+      ! lihuimin TO_DO consider o2x_ix, r2x_ox
+      !if (ice_present) call mrg_x2i_init_mct( cdata_ix, a2x_ix, o2x_ix )
+      ! lihuimin 2011.11.4
+      !if (ice_present) call mrg_x2i_init_mct( cdata_ix, a2x_ix2, o2x_ix )
+      ! modi end
+      ! lihuimin 2012.5.13, vectorize
+      do aindex = 1,ANUM
+         if (ice_present) call mrg_x2i_init_mct( cdata_ix, a2x_ix(aindex), o2x_ix )
+      enddo
+      ! modi end
+
+      !if (ocn_present) call mrg_x2o_init_mct( cdata_ox, a2x_ox, i2x_ox, r2x_ox )
+      ! lihuimin 2011.11.4
+      !if (ocn_present) call mrg_x2o_init_mct( cdata_ox, a2x_ox2, i2x_ox, r2x_ox )
+      ! modi end
+      ! lihuimin 2012.5.13, vectorize
+      ! lihuimin, 2012.9.29, deal with r2x_ox
+      do aindex = 1,ANUM
+         if (ocn_present) then
+            if (multilnd) then
+               lindex = aindex
+               call mrg_x2o_init_mct( cdata_ox, a2x_ox(aindex), i2x_ox, r2x_ox(lindex) )
+            else
+               call mrg_x2o_init_mct( cdata_ox, a2x_ox(aindex), i2x_ox, r2x_ox(1) )
+            endif
+         endif
+      enddo
+      ! modi end
+
+      !if (lnd_present) call mrg_x2l_init_mct( cdata_lx, a2x_lx)
+      ! lihuimin 2011.11.4
+      !if (lnd_present) call mrg_x2l_init_mct( cdata_lx, a2x_lx2)
+      ! modi end
+      ! lihuimin 2012.5.13, vectorize
+      ! lihuimin, 2012.8.12, multilnd judegement
+      if (multilnd) then
+         do lindex = 1,LNUM
+            if (lnd_present) call mrg_x2l_init_mct( cdata_lx(lindex), a2x_lx(lindex))
+         enddo
+      else
+         do aindex = 1,ANUM
+            if (lnd_present) call mrg_x2l_init_mct( cdata_lx(1), a2x_lx(aindex))
+         enddo
+      endif
+      ! modi end
+
       if (glc_present) call mrg_x2g_init_mct( cdata_gx, s2x_gx)
       if (sno_present) call mrg_x2s_init_mct( cdata_sx, g2x_sx)
 
@@ -1080,8 +1489,20 @@ subroutine ccsm_init()
 
       if (ocn_present) then
          if ( seq_comm_iamroot(CPLID)) write(logunit,F00) 'Initializing atm/ocn mapping'
-         call map_atm2ocn_init_mct(cdata_ax, cdata_ox)
-         call map_ocn2atm_init_mct(cdata_ox, cdata_ax)
+         ! lihuimin 2011.11.18 TO_DO, 2011.11.21 consider -> is cdata_ox be changed
+         !call map_atm2ocn_init_mct(cdata_ax, cdata_ox)
+         !call map_ocn2atm_init_mct(cdata_ox, cdata_ax)
+         ! lihuimin 2011.11.4 NOTICE: what if atm1 and atm2 get different resolution or mapping
+         ! lihumin 2011.12.2, error when run B1850(full active), slon_a/slon_o problem
+         !call map_atm2ocn_init_mct(cdata_ax2, cdata_ox)
+         !call map_ocn2atm_init_mct(cdata_ox, cdata_ax2)
+         ! modi end
+         ! lihuimin 2012.5.13, vectorize
+         do aindex = 1,ANUM
+            call map_atm2ocn_init_mct(cdata_ax(aindex), cdata_ox)
+            call map_ocn2atm_init_mct(cdata_ox, cdata_ax(aindex))
+         enddo
+         ! modi end
       endif
       if (ice_present .and. ocn_present) then
          if ( seq_comm_iamroot(CPLID)) write(logunit,F00) 'Initializing ocn/ice mapping'
@@ -1091,16 +1512,46 @@ subroutine ccsm_init()
       if (ice_present) then
          if ( seq_comm_iamroot(CPLID)) write(logunit,F00) 'Initializing atm/ice mapping'
 !         call map_atm2ice_init_mct(cdata_ax, cdata_ix)
-         call map_ice2atm_init_mct(cdata_ix, cdata_ax)
+         !call map_ice2atm_init_mct(cdata_ix, cdata_ax)
+         ! lihuimin 2011.11.4
+         !call map_ice2atm_init_mct(cdata_ix, cdata_ax2)
+         ! modi end
+         ! lihuimin 2012.5.13, vectorize
+         do aindex = 1,ANUM
+            call map_ice2atm_init_mct(cdata_ix, cdata_ax(aindex))
+         enddo
+         ! modi end
       endif
       if (rof_present .and. ocnrof_prognostic) then
          if ( seq_comm_iamroot(CPLID)) write(logunit,F00) 'Initializing rof/ocn mapping'
-         call map_rof2ocn_init_mct(cdata_rx, cdata_ox)
+         ! lihuimin, 2012.9.29, rof
+         do lindex = 1,LNUM
+            call map_rof2ocn_init_mct(cdata_rx(lindex), cdata_ox)
+         enddo
+         ! modi end
       endif
       if (lnd_present) then
          if ( seq_comm_iamroot(CPLID)) write(logunit,F00) 'Initializing atm/lnd mapping'
-         call map_atm2lnd_init_mct(cdata_ax, cdata_lx)
-         call map_lnd2atm_init_mct(cdata_lx, cdata_ax)
+         !call map_atm2lnd_init_mct(cdata_ax, cdata_lx)
+         !call map_lnd2atm_init_mct(cdata_lx, cdata_ax)
+         ! lihuimin 2011.11.4
+         !call map_atm2lnd_init_mct(cdata_ax2, cdata_lx)
+         !call map_lnd2atm_init_mct(cdata_lx, cdata_ax2)
+         ! modi end
+         ! lihuimin 2012.5.13, vectorize
+         ! lihuimin, 2012.8.12, multilnd judgement
+         if (multilnd) then
+            do lindex = 1,LNUM
+               call map_atm2lnd_init_mct(cdata_ax(lindex), cdata_lx(lindex))
+               call map_lnd2atm_init_mct(cdata_lx(lindex), cdata_ax(lindex))
+            enddo
+         else
+            do aindex = 1,ANUM
+               call map_atm2lnd_init_mct(cdata_ax(aindex), cdata_lx(1))
+               call map_lnd2atm_init_mct(cdata_lx(1), cdata_ax(aindex))
+            enddo
+         endif
+         ! modi end
       endif
       if (sno_present .and. glc_present) then
          if ( seq_comm_iamroot(CPLID)) write(logunit,F00) 'Initializing sno/glc mapping'
@@ -1110,6 +1561,7 @@ subroutine ccsm_init()
 
       call t_stopf  ('driver_init_maps')
 
+
       !-----------------------------------------------------------------------------
       ! Check domains if appropriate
       ! This must be done after the mappers are initialized since
@@ -1118,12 +1570,34 @@ subroutine ccsm_init()
 
       if (domain_check) then
          if ( seq_comm_iamroot(CPLID)) write(logunit,F00) 'Performing domain checking'
-         call seq_domain_check_mct( cdata_ax, cdata_ix, cdata_lx, cdata_ox, &
-                                    cdata_rx, cdata_gx, cdata_sx)
+         !call seq_domain_check_mct( cdata_ax, cdata_ix, cdata_lx, cdata_ox, &
+         !                           cdata_rx, cdata_gx, cdata_sx)
+         ! lihuimin 2011.11.4
+         !call seq_domain_check_mct( cdata_ax2, cdata_ix, cdata_lx, cdata_ox, &
+         !                           cdata_rx, cdata_gx, cdata_sx)
+         ! modi end
+         ! lihuimin 2012.5.13, vectorize
+         ! lihuimin, 2012.8.12, lnd vectorized
+         ! when multilnd, LNUM equals ANUM
+         ! lihuimin, 2012.9.29, cdata_rx
+         if (multilnd) then
+            do aindex = 1,ANUM
+               lindex = aindex
+               call seq_domain_check_mct( cdata_ax(aindex), cdata_ix, cdata_lx(lindex), cdata_ox, &
+                                          cdata_rx(lindex), cdata_gx, cdata_sx)
+            enddo
+         else
+            do aindex = 1,ANUM
+               call seq_domain_check_mct( cdata_ax(aindex), cdata_ix, cdata_lx(1), cdata_ox, &
+                                          cdata_rx(1), cdata_gx, cdata_sx)
+            enddo
+         endif
+         ! modi end
       endif
 
       if (drv_threading) call seq_comm_setnthreads(nthreads_GLOID)
    endif ! iamin_CPLID
+
 
    !-----------------------------------------------------------------------------
    ! Map  dom_*x to dom_** in case any domain fields have been updated on cpl pes
@@ -1132,31 +1606,108 @@ subroutine ccsm_init()
    ! Map initial component AVs from component to coupler pes
    !-----------------------------------------------------------------------------
 
+
+
    if (iamin_CPLATMID .and. atm_present) then
-      call map_atmx2atma_mct( cdata_ax, dom_ax%data, cdata_aa, dom_aa%data)
+      !if (iamin_CPLATMID1) then
+      !   call map_atmx2atma_mct( cdata_ax, dom_ax%data, cdata_aa, dom_aa%data)
+      !endif
+      !if (iamin_CPLATMID2) then
+      !   ! lihuimin 2011.11.4
+      !   call map_atmx2atma_mct( cdata_ax2, dom_ax2%data, cdata_aa2, dom_aa2%data)
+      !   ! modi end
+      !endif
+      ! lihuimin 2012.5.13, vectorize
+      do aindex = 1,ANUM
+         if (iamin_CPLATMID_array(aindex)) then
+            call map_atmx2atma_mct( cdata_ax(aindex), dom_ax(aindex)%data, cdata_aa(aindex), dom_aa(aindex)%data)
+         endif
+      enddo
+      ! modi end
       if (iamin_ATMID) then
-         call domain_areafactinit_mct(cdata_aa,mdl2drv_aa,drv2mdl_aa,'areafact_a')
-         call mct_avect_vecmult(a2x_aa,mdl2drv_aa,seq_flds_a2x_fluxes)
+         !if (iamin_ATMID1) then
+         !   call domain_areafactinit_mct(cdata_aa,mdl2drv_aa,drv2mdl_aa,'areafact_a')
+         !   call mct_avect_vecmult(a2x_aa,mdl2drv_aa,seq_flds_a2x_fluxes)
+         !else ! iamin_ATMID2
+         !   ! lihuimin 2011.11.4
+         !   call domain_areafactinit_mct(cdata_aa2,mdl2drv_aa2,drv2mdl_aa2,'areafact_a2')
+         !   call mct_avect_vecmult(a2x_aa2,mdl2drv_aa2,seq_flds_a2x_fluxes)
+         !   ! modi end
+         !endif
+         ! lihuimin 2012.5.13, vectorize
+         do aindex = 1,ANUM
+            if (iamin_ATMID_array(aindex)) then
+               call domain_areafactinit_mct(cdata_aa(aindex),pArray_a(aindex)%mdl2drv_aa,pArray_a(aindex)%drv2mdl_aa,'areafact_a')
+               call mct_avect_vecmult(a2x_aa(aindex),pArray_a(aindex)%mdl2drv_aa,seq_flds_a2x_fluxes)
+            endif
+         enddo
+         ! modi end
       endif
-      call map_atma2atmx_mct(cdata_aa, a2x_aa, cdata_ax, a2x_ax)
+      !if (iamin_CPLATMID1) then
+      !   call map_atma2atmx_mct(cdata_aa, a2x_aa, cdata_ax, a2x_ax)
+      !endif
+      !if (iamin_CPLATMID2) then
+      !   ! lihuimin 2011.11.4
+      !   call map_atma2atmx_mct(cdata_aa2, a2x_aa2, cdata_ax2, a2x_ax2)
+      !   ! modi end
+      !endif
+      ! lihuimin 2012.5.13, vectorize
+      do aindex = 1,ANUM
+         if (iamin_CPLATMID_array(aindex)) then
+            call map_atma2atmx_mct(cdata_aa(aindex), a2x_aa(aindex), cdata_ax(aindex), a2x_ax(aindex))
+         endif
+      enddo
+      ! modi end
    endif
 
    if (iamin_CPLLNDID .and. lnd_present) then
-      call map_lndx2lndl_mct( cdata_lx, dom_lx%data, cdata_ll, dom_ll%data)
+      ! lihuimin, 2012.8.12, lnd vectorized
+      do lindex = 1,LNUM
+         if (iamin_CPLLNDID_array(lindex)) then
+            call map_lndx2lndl_mct( cdata_lx(lindex), dom_lx(lindex)%data, cdata_ll(lindex), dom_ll(lindex)%data)
+         endif
+      enddo
+      ! lihuimin, 2012.8.12, lnd vectorized, use pArray_l
       if (iamin_LNDID) then
-         call domain_areafactinit_mct(cdata_ll,mdl2drv_ll,drv2mdl_ll,'areafact_l')
-         call mct_avect_vecmult(l2x_ll,mdl2drv_ll,seq_flds_l2x_fluxes)
+         do lindex = 1,LNUM
+            if (iamin_LNDID_array(lindex)) then
+               call domain_areafactinit_mct(cdata_ll(lindex),pArray_l(lindex)%mdl2drv_ll,pArray_l(lindex)%drv2mdl_ll,'areafact_l')
+               call mct_avect_vecmult(l2x_ll(lindex),pArray_l(lindex)%mdl2drv_ll,seq_flds_l2x_fluxes)
+            endif
+         enddo
       endif
-      call map_lndl2lndx_mct(cdata_ll, l2x_ll, cdata_lx, l2x_lx)
+      ! lihuimin, 2012.8.12, lnd vectorzied
+      do lindex = 1,LNUM
+         if (iamin_CPLLNDID_array(lindex)) then
+            call map_lndl2lndx_mct(cdata_ll(lindex), l2x_ll(lindex), cdata_lx(lindex), l2x_lx(lindex))
+         endif
+      enddo
+      ! modi end
    endif
 
    if (iamin_CPLLNDID .and. rof_present) then
-      call map_rofx2rofr_mct( cdata_rx, dom_rx%data, cdata_rr, dom_rr%data)
+      ! lihuimin, 2012.9.29, rof
+      do lindex = 1,LNUM
+         if (iamin_CPLLNDID_array(lindex)) then
+            call map_rofx2rofr_mct( cdata_rx(lindex), dom_rx(lindex)%data, cdata_rr(lindex), dom_rr(lindex)%data)
+         endif
+      enddo
+      ! lihuimin, 2012.9.29.rof
       if (iamin_LNDID) then
-         call domain_areafactinit_mct(cdata_rr,mdl2drv_rr,drv2mdl_rr,'areafact_r')
-         call mct_avect_vecmult(r2x_rr,mdl2drv_rr,seq_flds_r2x_fluxes)
+         do lindex = 1,LNUM
+            if (iamin_LNDID_array(lindex)) then
+               call domain_areafactinit_mct(cdata_rr(lindex),pArray_r(lindex)%mdl2drv_rr,pArray_r(lindex)%drv2mdl_rr,'areafact_r')
+               call mct_avect_vecmult(r2x_rr(lindex),pArray_r(lindex)%mdl2drv_rr,seq_flds_r2x_fluxes)
+            endif
+         enddo
       endif
-      call map_rofr2rofx_mct(cdata_rr, r2x_rr, cdata_rx, r2x_rx)
+      ! lihuimin, 2012.9.29, rof
+      do lindex = 1,LNUM
+         if (iamin_CPLLNDID_array(lindex)) then
+            call map_rofr2rofx_mct(cdata_rr(lindex), r2x_rr(lindex), cdata_rx(lindex), r2x_rx(lindex))
+         endif
+      enddo
+      ! modi end
    endif
 
    if (iamin_CPLLNDID .and. sno_present) then
@@ -1200,10 +1751,26 @@ subroutine ccsm_init()
    !-----------------------------------------------------------------------------
    if (iamin_CPLID .and. info_debug > 1) then
       if (drv_threading) call seq_comm_setnthreads(nthreads_CPLID)
-      if (atm_present) call seq_diag_avect_mct(cdata_ax,a2x_ax,'recv atm IC')
+      !if (atm_present) call seq_diag_avect_mct(cdata_ax,a2x_ax,'recv atm IC')
+      ! lihuimin 2011.11.4
+      !if (atm_present) call seq_diag_avect_mct(cdata_ax2,a2x_ax2,'recv atm2 IC')
+      ! modi end
+      ! lihuimin 2012.5.13, vectorize
+      do aindex = 1,ANUM
+         if (atm_present) call seq_diag_avect_mct(cdata_ax(aindex),a2x_ax(aindex),'recv atm IC')
+      enddo
+      ! modi end
       if (ice_present) call seq_diag_avect_mct(cdata_ix,i2x_ix,'recv ice IC')
-      if (lnd_present) call seq_diag_avect_mct(cdata_lx,l2x_lx,'recv lnd IC')
-      if (rof_present) call seq_diag_avect_mct(cdata_rx,r2x_rx,'recv roff IC')
+      ! lihuimin, 2012,8.12, lnd vectorized
+      do lindex = 1,LNUM
+         if (lnd_present) call seq_diag_avect_mct(cdata_lx(lindex),l2x_lx(lindex),'recv lnd IC')
+      enddo
+      ! modi end
+      ! lihuimin, 2012.9.29, rof
+      do lindex = 1,LNUM
+         if (rof_present) call seq_diag_avect_mct(cdata_rx(lindex),r2x_rx(lindex),'recv roff IC')
+      enddo
+      ! modi end
       if (sno_present) call seq_diag_avect_mct(cdata_sx,s2x_sx,'recv sno IC')
       if (ocn_present) call seq_diag_avect_mct(cdata_ox,o2x_ox,'recv ocn IC')
       if (glc_present) call seq_diag_avect_mct(cdata_gx,g2x_gx,'recv glc IC')
@@ -1217,17 +1784,73 @@ subroutine ccsm_init()
    if (iamin_CPLID) then
       if (drv_threading) call seq_comm_setnthreads(nthreads_CPLID)
       if ( seq_comm_iamroot(CPLID)) write(logunit,F00) 'Initializing fractions'
-      call seq_frac_init(cdata_ax, cdata_ix, cdata_lx, cdata_ox, cdata_gx, &
-                         ice_present, ocn_present, lnd_present, glc_present, &
-                         dead_comps, &
-                         fractions_ax, fractions_ix, fractions_lx, fractions_ox, &
-                         fractions_gx)
+      !call seq_frac_init(cdata_ax, cdata_ix, cdata_lx, cdata_ox, cdata_gx, &
+      !                   ice_present, ocn_present, lnd_present, glc_present, &
+      !                   dead_comps, &
+      !                   fractions_ax, fractions_ix, fractions_lx, fractions_ox, &
+      !                   fractions_gx)
+      ! lihuimin 2011.11.4
+      !call seq_frac_init(cdata_ax2, cdata_ix, cdata_lx, cdata_ox, cdata_gx, &
+      !                   ice_present, ocn_present, lnd_present, glc_present, &
+      !                   dead_comps, &
+      !                   fractions_ax2, fractions_ix, fractions_lx, fractions_ox, &
+      !                   fractions_gx)
+      ! modi end
+      ! lihuimin 2012.5.13, vectorize
+      ! lihuimin, 2012.8.12, multilnd judegement, LNUM equals ANUM when multilnd
+      if (multilnd) then
+         do aindex = 1,ANUM
+            lindex = aindex
+            call seq_frac_init(cdata_ax(aindex), cdata_ix, cdata_lx(lindex), cdata_ox, cdata_gx, &
+                               ice_present, ocn_present, lnd_present, glc_present, &
+                               dead_comps, &
+                               fractions_ax(aindex), fractions_ix, fractions_lx(lindex), fractions_ox, &
+                               fractions_gx)
+         enddo
+      else
+         do aindex = 1,ANUM
+            call seq_frac_init(cdata_ax(aindex), cdata_ix, cdata_lx(1), cdata_ox, cdata_gx, &
+                               ice_present, ocn_present, lnd_present, glc_present, &
+                               dead_comps, &
+                               fractions_ax(aindex), fractions_ix, fractions_lx(1), fractions_ox, &
+                               fractions_gx)
+         enddo
+      endif
+      ! modi end
       if ( seq_comm_iamroot(CPLID)) write(logunit,F00) 'Setting fractions '
-      call seq_frac_set(i2x_ix, &
-                        cdata_ax, cdata_ix, cdata_lx, cdata_ox, cdata_gx, &
-                        ice_present, ocn_present, lnd_present, glc_present, &
-                        fractions_ax, fractions_ix, fractions_lx, fractions_ox, &
-                        fractions_gx)
+      !call seq_frac_set(i2x_ix, &
+      !                  cdata_ax, cdata_ix, cdata_lx, cdata_ox, cdata_gx, &
+      !                  ice_present, ocn_present, lnd_present, glc_present, &
+      !                  fractions_ax, fractions_ix, fractions_lx, fractions_ox, &
+      !                  fractions_gx)
+      ! lihuimin 2011.11.4
+      !call seq_frac_set(i2x_ix, &
+      !                  cdata_ax2, cdata_ix, cdata_lx, cdata_ox, cdata_gx, &
+      !                  ice_present, ocn_present, lnd_present, glc_present, &
+      !                  fractions_ax2, fractions_ix, fractions_lx, fractions_ox, &
+      !                  fractions_gx)
+      ! modi end
+      ! lihuimin 2012.5.13, vectorize
+      ! lihumin, 2012.8.12, multilnd judgement, LNUM equals ANUM when multilnd
+      if (multilnd) then
+         do aindex = 1,ANUM
+            lindex = aindex
+            call seq_frac_set(i2x_ix, &
+                              cdata_ax(aindex), cdata_ix, cdata_lx(lindex), cdata_ox, cdata_gx, &
+                              ice_present, ocn_present, lnd_present, glc_present, &
+                              fractions_ax(aindex), fractions_ix, fractions_lx(lindex), fractions_ox, &
+                              fractions_gx)
+         enddo
+      else
+         do aindex = 1,ANUM
+            call seq_frac_set(i2x_ix, &
+                              cdata_ax(aindex), cdata_ix, cdata_lx(1), cdata_ox, cdata_gx, &
+                              ice_present, ocn_present, lnd_present, glc_present, &
+                              fractions_ax(aindex), fractions_ix, fractions_lx(1), fractions_ox, &
+                              fractions_gx)
+         enddo
+      endif
+      ! modi end
 
       !-----------------------------------------------------------------------------
       ! Initialize atm/ocn flux component and compute ocean albedos
@@ -1236,16 +1859,51 @@ subroutine ccsm_init()
          if ( seq_comm_iamroot(CPLID)) write(logunit,F00) 'Initializing atm/ocn flux component'
          ! note: albedo_only mode doesn't use a2x_ox or o2x_ox or a2x_ax or o2x_ax
          ! Initialize attribute vector
-         call mct_aVect_init(xao_ox, rList=seq_flds_xao_fields, lsize=mct_aVect_lsize(o2x_ox))
-         call mct_aVect_zero(xao_ox)
+         ! lihuimin TO_DO consider o2x_ox ?
+         !call mct_aVect_init(xao_ox, rList=seq_flds_xao_fields, lsize=mct_aVect_lsize(o2x_ox))
+         !call mct_aVect_zero(xao_ox)
+         ! lihuimin 2011.11.5
+         !call mct_aVect_init(xao_ox2, rList=seq_flds_xao_fields, lsize=mct_aVect_lsize(o2x_ox))
+         !call mct_aVect_zero(xao_ox2)
+         ! modi end
+         ! lihuimin 2012.5.13, vectorize
+         do aindex = 1,ANUM
+            call mct_aVect_init(xao_ox(aindex), rList=seq_flds_xao_fields, lsize=mct_aVect_lsize(o2x_ox))
+            call mct_aVect_zero(xao_ox(aindex))
+         enddo
+         ! modi end
          if (trim(aoflux_grid) == 'ocn') then
             call seq_flux_init_mct(cdata_ox,fractions_ox)
          elseif (trim(aoflux_grid) == 'atm') then
-            call seq_flux_init_mct(cdata_ax,fractions_ax)
+            !call seq_flux_init_mct(cdata_ax,fractions_ax)
+            ! lihuimin 2011.11.4
+            !call seq_flux_init_mct(cdata_ax2,fractions_ax2)
+            ! modi end
+            ! lihuimin 2012.5.13, vectorize
+            do aindex = 1,ANUM
+               call seq_flux_init_mct(cdata_ax(aindex),fractions_ax(aindex))
+            enddo
+            ! modi end
          elseif (trim(aoflux_grid) == 'exch') then
-            call seq_flux_initexch_mct(cdata_ax,cdata_ox)
+            !call seq_flux_initexch_mct(cdata_ax,cdata_ox)
+            ! lihuimin 2011.11.4
+            !call seq_flux_initexch_mct(cdata_ax2,cdata_ox)
+            ! modi end
+            ! lihuimin 2012.5.13, vectorize
+            do aindex = 1,ANUM
+               call seq_flux_initexch_mct(cdata_ax(aindex),cdata_ox)
+            enddo
+            ! modi end
          endif
-         call seq_flux_ocnalb_mct(cdata_ox,xao_ox,fractions_ox)
+         !call seq_flux_ocnalb_mct(cdata_ox,xao_ox,fractions_ox)
+         ! lihuimin 2011.11.5
+         !call seq_flux_ocnalb_mct(cdata_ox,xao_ox2,fractions_ox)
+         ! modi end
+         ! lihuimin 2012.5.13, vectorize
+         do aindex = 1,ANUM
+            call seq_flux_ocnalb_mct(cdata_ox,xao_ox(aindex),fractions_ox)
+         enddo
+         ! modi end
       endif
 
       if (drv_threading) call seq_comm_setnthreads(nthreads_GLOID)
@@ -1263,26 +1921,82 @@ subroutine ccsm_init()
          if (drv_threading) call seq_comm_setnthreads(nthreads_CPLID)
          if (lnd_present) then
             if ( seq_comm_iamroot(CPLID)) write(logunit,F00) 'Calling map_lnd2atm_mct'
-            call map_lnd2atm_mct( cdata_lx, l2x_lx, cdata_ax, l2x_ax, &
-                                  fractions_l=fractions_lx, fractions_a=fractions_ax, &
-                                  fluxlist=seq_flds_l2x_fluxes, statelist=seq_flds_l2x_states )
+            !call map_lnd2atm_mct( cdata_lx, l2x_lx, cdata_ax, l2x_ax, &
+            !                      fractions_l=fractions_lx, fractions_a=fractions_ax, &
+            !                      fluxlist=seq_flds_l2x_fluxes, statelist=seq_flds_l2x_states )
+            ! lihuimin 2011.11.4
+            !call map_lnd2atm_mct( cdata_lx, l2x_lx, cdata_ax2, l2x_ax2, &
+            !                      fractions_l=fractions_lx, fractions_a=fractions_ax2, &
+            !                      fluxlist=seq_flds_l2x_fluxes, statelist=seq_flds_l2x_states )
+            ! modi end
+            ! lihuimin 2012.5.13, vectorize
+            ! lihuimin, 2012.8.13, multilnd judgement
+            if (multilnd) then
+               do lindex = 1,LNUM
+                  aindex = lindex
+                  call map_lnd2atm_mct( cdata_lx(lindex), l2x_lx(lindex), cdata_ax(aindex), l2x_ax(aindex), &
+                                        fractions_l=fractions_lx(lindex), fractions_a=fractions_ax(aindex), &
+                                        fluxlist=seq_flds_l2x_fluxes, statelist=seq_flds_l2x_states )
+               enddo
+            else
+               do aindex = 1,ANUM
+                  call map_lnd2atm_mct( cdata_lx(1), l2x_lx(1), cdata_ax(aindex), l2x_ax(aindex), &
+                                        fractions_l=fractions_lx(1), fractions_a=fractions_ax(aindex), &
+                                        fluxlist=seq_flds_l2x_fluxes, statelist=seq_flds_l2x_states )
+               enddo
+            endif
+            ! modi end
          endif
          if (ocn_present) then
             if ( seq_comm_iamroot(CPLID)) write(logunit,F00) 'Calling map_ocn2atm_mct for mapping o2x_ox to o2x_ax'
-            call map_ocn2atm_mct( cdata_ox, o2x_ox, cdata_ax, o2x_ax, &
-                                  fractions_o=fractions_ox, fractions_a=fractions_ax, &
-                                  statelist=seq_flds_o2x_states )
-            call map_ocn2atm_mct( cdata_ox, o2x_ox, cdata_ax, o2x_ax, &
-                                  fluxlist=seq_flds_o2x_fluxes )
-            call map_ocn2atm_mct( cdata_ox, xao_ox, cdata_ax, xao_ax, &
-                                  fractions_o=fractions_ox, fractions_a=fractions_ax, &
-                                  statelist=seq_flds_xao_albedo )
+            !call map_ocn2atm_mct( cdata_ox, o2x_ox, cdata_ax, o2x_ax, &
+            !                      fractions_o=fractions_ox, fractions_a=fractions_ax, &
+            !                      statelist=seq_flds_o2x_states )
+            !call map_ocn2atm_mct( cdata_ox, o2x_ox, cdata_ax, o2x_ax, &
+            !                      fluxlist=seq_flds_o2x_fluxes )
+            !call map_ocn2atm_mct( cdata_ox, xao_ox, cdata_ax, xao_ax, &
+            !                      fractions_o=fractions_ox, fractions_a=fractions_ax, &
+            !                      statelist=seq_flds_xao_albedo )
+            ! lihuimin 2011.11.4
+            !call map_ocn2atm_mct( cdata_ox, o2x_ox, cdata_ax2, o2x_ax2, &
+            !                      fractions_o=fractions_ox, fractions_a=fractions_ax2, &
+            !                      statelist=seq_flds_o2x_states )
+            !call map_ocn2atm_mct( cdata_ox, o2x_ox, cdata_ax2, o2x_ax2, &
+            !                      fluxlist=seq_flds_o2x_fluxes )
+            !call map_ocn2atm_mct( cdata_ox, xao_ox2, cdata_ax2, xao_ax2, &
+            !                      fractions_o=fractions_ox, fractions_a=fractions_ax2, &
+            !                      statelist=seq_flds_xao_albedo )
+            ! modi end
+            ! lihuimin 2012.5.13, vectorize
+            do aindex = 1,ANUM
+               call map_ocn2atm_mct( cdata_ox, o2x_ox, cdata_ax(aindex), o2x_ax(aindex), &
+                                     fractions_o=fractions_ox, fractions_a=fractions_ax(aindex), &
+                                     statelist=seq_flds_o2x_states )
+               call map_ocn2atm_mct( cdata_ox, o2x_ox, cdata_ax(aindex), o2x_ax(aindex), &
+                                     fluxlist=seq_flds_o2x_fluxes )
+               call map_ocn2atm_mct( cdata_ox, xao_ox(aindex), cdata_ax(aindex), xao_ax(aindex), &
+                                     fractions_o=fractions_ox, fractions_a=fractions_ax(aindex), &
+                                     statelist=seq_flds_xao_albedo )
+            enddo
+            ! modi end
             if (trim(aoflux_grid) == 'ocn') then
                if ( seq_comm_iamroot(CPLID)) &
                   write(logunit,F00) 'Calling map_ocn2atm_mct for mapping xao_ox to xao_ax'
-               call map_ocn2atm_mct( cdata_ox, xao_ox, cdata_ax, xao_ax, &
-                                     fractions_o=fractions_ox, fractions_a=fractions_ax, &
-                                     fluxlist=seq_flds_xao_fluxes, statelist=seq_flds_xao_states ) 
+               !call map_ocn2atm_mct( cdata_ox, xao_ox, cdata_ax, xao_ax, &
+               !                      fractions_o=fractions_ox, fractions_a=fractions_ax, &
+               !                      fluxlist=seq_flds_xao_fluxes, statelist=seq_flds_xao_states )
+               ! lihuimin 2011.11.4
+               !call map_ocn2atm_mct( cdata_ox, xao_ox2, cdata_ax2, xao_ax2, &
+               !                      fractions_o=fractions_ox, fractions_a=fractions_ax2, &
+               !                      fluxlist=seq_flds_xao_fluxes, statelist=seq_flds_xao_states )
+               ! modi end
+               ! lihuimin 2012.5.13, vectorize
+               do aindex = 1,ANUM
+                  call map_ocn2atm_mct( cdata_ox, xao_ox(aindex), cdata_ax(aindex), xao_ax(aindex), &
+                                        fractions_o=fractions_ox, fractions_a=fractions_ax(aindex), &
+                                        fluxlist=seq_flds_xao_fluxes, statelist=seq_flds_xao_states )
+               enddo
+               ! modi end
             endif
             if (trim(aoflux_grid) == 'atm') then
                if ( seq_comm_iamroot(CPLID)) &
@@ -1292,29 +2006,82 @@ subroutine ccsm_init()
 ! bilinear mapping currently
 !               call map_atm2ocn_mct( cdata_ax, xao_ax, cdata_ox, xao_ox, &
 !                                     fluxlist=seq_flds_xao_fluxes, statelist=seq_flds_xao_states )
-               call map_atm2ocn_mct( cdata_ax, xao_ax, cdata_ox, xao_ox, &
-                                     fluxlist=seq_flds_xao_states//":"//seq_flds_xao_fluxes)
+
+               !call map_atm2ocn_mct( cdata_ax, xao_ax, cdata_ox, xao_ox, &
+               !                      fluxlist=seq_flds_xao_states//":"//seq_flds_xao_fluxes)
+               ! lihuimin 2011.11.5
+               !call map_atm2ocn_mct( cdata_ax2, xao_ax2, cdata_ox, xao_ox2, &
+               !                      fluxlist=seq_flds_xao_states//":"//seq_flds_xao_fluxes)
+               ! modi end
+               ! lihuimin 2012.5.13, vectorize
+               do aindex = 1,ANUM
+                  call map_atm2ocn_mct( cdata_ax(aindex), xao_ax(aindex), cdata_ox, xao_ox(aindex), &
+                                        fluxlist=seq_flds_xao_states//":"//seq_flds_xao_fluxes)
+               enddo
+               ! modi end
             endif
          endif
          if (ice_present) then
             if ( seq_comm_iamroot(CPLID)) write(logunit,F00) 'Calling map_ice2atm_mct for mapping i2x_ix to i2x_ax'
-            call map_ice2atm_mct( cdata_ix, i2x_ix, cdata_ax, i2x_ax, &
-                                  fractions_i=fractions_ix, fractions_a=fractions_ax, &
-                                  fluxlist=seq_flds_i2x_fluxes, statelist=seq_flds_i2x_states ) 
+            !call map_ice2atm_mct( cdata_ix, i2x_ix, cdata_ax, i2x_ax, &
+            !                      fractions_i=fractions_ix, fractions_a=fractions_ax, &
+            !                      fluxlist=seq_flds_i2x_fluxes, statelist=seq_flds_i2x_states )
+            ! lihuimin 2011.11.4
+            !call map_ice2atm_mct( cdata_ix, i2x_ix, cdata_ax2, i2x_ax2, &
+            !                      fractions_i=fractions_ix, fractions_a=fractions_ax2, &
+            !                      fluxlist=seq_flds_i2x_fluxes, statelist=seq_flds_i2x_states )
+            ! modi end
+            ! lihuimin 2012.5.13, vectorize
+            do aindex = 1,ANUM
+               call map_ice2atm_mct( cdata_ix, i2x_ix, cdata_ax(aindex), i2x_ax(aindex), &
+                                     fractions_i=fractions_ix, fractions_a=fractions_ax(aindex), &
+                                     fluxlist=seq_flds_i2x_fluxes, statelist=seq_flds_i2x_states )
+            enddo
+            ! modi end
          endif
          if (lnd_present .or. ocn_present) then
             if ( seq_comm_iamroot(CPLID)) write(logunit,F00) 'Calling mrg_x2a_run_mct'
-            call mrg_x2a_run_mct( cdata_ax, l2x_ax, o2x_ax, xao_ax, i2x_ax, fractions_ax, x2a_ax )
+            !call mrg_x2a_run_mct( cdata_ax, l2x_ax, o2x_ax, xao_ax, i2x_ax, fractions_ax, x2a_ax )
+            ! lihuimin 2011.11.4
+            !call mrg_x2a_run_mct( cdata_ax2, l2x_ax2, o2x_ax2, xao_ax2, i2x_ax2, fractions_ax2, x2a_ax2 )
+            ! modi end
+            ! lihuimin 2012.5.13, vectorize
+            do aindex = 1,ANUM
+               call mrg_x2a_run_mct( cdata_ax(aindex), l2x_ax(aindex), o2x_ax(aindex), xao_ax(aindex), i2x_ax(aindex), fractions_ax(aindex), x2a_ax(aindex) )
+            enddo
+            ! modi end
          endif
    
-         if (info_debug > 1) call seq_diag_avect_mct(cdata_ax,x2a_ax,'send atm IC2')
+         !if (info_debug > 1) call seq_diag_avect_mct(cdata_ax,x2a_ax,'send atm IC2')
+         ! lihuimin 2011.11.4
+         !if (info_debug > 1) call seq_diag_avect_mct(cdata_ax2,x2a_ax2,'send atm2 IC2')
+         ! modi end
+         ! lihuimin 2012.5.13, vectorize
+         do aindex = 1,ANUm
+            if (info_debug > 1) call seq_diag_avect_mct(cdata_ax(aindex),x2a_ax(aindex),'send atm IC2')
+         enddo
+         ! modi end
          if ( seq_comm_iamroot(CPLID)) write(logunit,F00) 'Calling atm_init_mct'
    
          if (drv_threading) call seq_comm_setnthreads(nthreads_GLOID)
       endif
 
       if (iamin_CPLATMID) then
-         call map_atmx2atma_mct( cdata_ax, x2a_ax, cdata_aa, x2a_aa)
+         !if (iamin_CPLATMID1) then
+         !   call map_atmx2atma_mct( cdata_ax, x2a_ax, cdata_aa, x2a_aa)
+         !endif
+         !if (iamin_CPLATMID2) then
+         !   ! lihuimin 2011.11.4
+         !   call map_atmx2atma_mct( cdata_ax2, x2a_ax2, cdata_aa2, x2a_aa2)
+         !   ! modi end
+         !endif
+         ! lihuimin 2012.5.13, vectorize
+         do aindex = 1,ANUM
+            if (iamin_CPLATMID_array(aindex)) then
+               call map_atmx2atma_mct( cdata_ax(aindex), x2a_ax(aindex), cdata_aa(aindex), x2a_aa(aindex))
+            endif
+         enddo
+         ! modi end
          call seq_infodata_exchange(infodata,CPLATMID,'cpl2atm_init')
       endif
    endif  ! atm_prognostic
@@ -1329,21 +2096,62 @@ subroutine ccsm_init()
       call t_adj_detailf(+2)
       if (drv_threading) call seq_comm_setnthreads(nthreads_ATMID)
       call seq_infodata_putData(infodata,atm_phase=2)
-      call mct_avect_vecmult(x2a_aa,drv2mdl_aa,seq_flds_x2a_fluxes)
-      call atm_init_mct( EClock_a, cdata_aa, x2a_aa, a2x_aa)
-      call mct_avect_vecmult(a2x_aa,mdl2drv_aa,seq_flds_a2x_fluxes)
+      ! lihuimin 2011.11.7 @Columbia process split
+      !if (iamin_ATMID1) then
+      !   call mct_avect_vecmult(x2a_aa,drv2mdl_aa,seq_flds_x2a_fluxes)
+      !   call atm_init_mct( EClock_a, cdata_aa, x2a_aa, a2x_aa, 1)
+      !   call mct_avect_vecmult(a2x_aa,mdl2drv_aa,seq_flds_a2x_fluxes)
+      !else ! iamin_ATMID2
+      !   ! lihuimin 2011.11.4
+      !   call mct_avect_vecmult(x2a_aa2,drv2mdl_aa2,seq_flds_x2a_fluxes)
+      !   call atm_init_mct( EClock_a, cdata_aa2, x2a_aa2, a2x_aa2, 2)
+      !   call mct_avect_vecmult(a2x_aa2,mdl2drv_aa2,seq_flds_a2x_fluxes)
+      !   ! modi end
+      !endif
+      ! modi end
+      ! lihuimin 2012.5.13, @Beijing, vectorize
+      do aindex = 1,ANUM
+         if (iamin_ATMID_array(aindex)) then
+            call mct_avect_vecmult(x2a_aa(aindex),pArray_a(aindex)%drv2mdl_aa,seq_flds_x2a_fluxes)
+            call atm_init_mct( EClock_a, cdata_aa(aindex), x2a_aa(aindex), a2x_aa(aindex), aindex)
+            call mct_avect_vecmult(a2x_aa(aindex),pArray_a(aindex)%mdl2drv_aa,seq_flds_a2x_fluxes)
+         endif
+      enddo
+      ! modi end
       if (drv_threading) call seq_comm_setnthreads(nthreads_GLOID)
       call t_adj_detailf(-2)
    endif
 
    if (iamin_CPLATMID) then
-      call map_atma2atmx_mct( cdata_aa, a2x_aa, cdata_ax, a2x_ax)
+      !if (iamin_CPLATMID1) then
+      !   call map_atma2atmx_mct( cdata_aa, a2x_aa, cdata_ax, a2x_ax)
+      !endif
+      !if (iamin_CPLATMID2) then
+      !   ! lihuimin 2011.11.4
+      !   call map_atma2atmx_mct( cdata_aa2, a2x_aa2, cdata_ax2, a2x_ax2)
+      !   ! modi end
+      !endif
+      ! lihuimin 2012.5.13, vectoirze
+      do aindex = 1,ANUM
+         if (iamin_CPLATMID_array(aindex)) then
+            call map_atma2atmx_mct( cdata_aa(aindex), a2x_aa(aindex), cdata_ax(aindex), a2x_ax(aindex))
+         endif
+      enddo
+      ! modi end
       call seq_infodata_exchange(infodata,CPLATMID,'atm2cpl_init')
     endif
 
    if (iamin_CPLID) then
       if (drv_threading) call seq_comm_setnthreads(nthreads_CPLID)
-      if (info_debug > 1) call seq_diag_avect_mct(cdata_ax,a2x_ax,'recv atm IC2')
+      !if (info_debug > 1) call seq_diag_avect_mct(cdata_ax,a2x_ax,'recv atm IC2')
+      ! lihuimin 2011.11.4
+      !if (info_debug > 1) call seq_diag_avect_mct(cdata_ax2,a2x_ax2,'recv atm2 IC2')
+      ! modi end
+      ! lihuimin 2012.5.13, vectorize
+      do aindex = 1,ANUM
+         if (info_debug > 1) call seq_diag_avect_mct(cdata_ax(aindex),a2x_ax(aindex),'recv atm IC2')
+      enddo
+      ! modi end
       if (drv_threading) call seq_comm_setnthreads(nthreads_GLOID)
    endif
 
@@ -1410,6 +2218,7 @@ subroutine ccsm_run()
       stop_alarm = .true.
    endif
 
+
    !----------------------------------------------------------
    ! Beginning of basic time step loop
    !----------------------------------------------------------
@@ -1420,6 +2229,7 @@ subroutine ccsm_run()
    Time_begin = mpi_wtime()
    Time_bstep = mpi_wtime()
    do while ( .not. stop_alarm)
+
 
       call t_startf('DRIVER_RUN_LOOP')
       call t_drvstartf ('DRIVER_CLOCK_ADVANCE',cplrun=.true.)
@@ -1516,8 +2326,18 @@ subroutine ccsm_run()
          call t_drvstartf ('DRIVER_OCNPREP',cplrun=.true.,barrier=mpicom_CPLID)
          if (drv_threading) call seq_comm_setnthreads(nthreads_CPLID)
          call t_drvstartf ('driver_ocnprep_atm2ocn',barrier=mpicom_CPLID)
-         call map_atm2ocn_mct( cdata_ax, a2x_ax, cdata_ox, a2x_ox, &
-                               fluxlist=seq_flds_a2x_fluxes, statelist=seq_flds_a2x_states )
+         !call map_atm2ocn_mct( cdata_ax, a2x_ax, cdata_ox, a2x_ox, &
+         !                      fluxlist=seq_flds_a2x_fluxes, statelist=seq_flds_a2x_states )
+         ! lihuimin 2011.11.4
+         !call map_atm2ocn_mct( cdata_ax2, a2x_ax2, cdata_ox, a2x_ox2, &
+         !                      fluxlist=seq_flds_a2x_fluxes, statelist=seq_flds_a2x_states )
+         ! modi end
+         ! lihuimin 2012.5.13, vectorize
+         do aindex = 1,ANUM
+            call map_atm2ocn_mct( cdata_ax(aindex), a2x_ax(aindex), cdata_ox, a2x_ox(aindex), &
+                                  fluxlist=seq_flds_a2x_fluxes, statelist=seq_flds_a2x_states )
+         enddo
+         ! modi end
          call t_drvstopf  ('driver_ocnprep_atm2ocn')
          if (drv_threading) call seq_comm_setnthreads(nthreads_GLOID)
          call t_drvstopf  ('DRIVER_OCNPREP',cplrun=.true.)
@@ -1554,7 +2374,15 @@ subroutine ccsm_run()
             ! temporary formation of average
 !           call mct_accum_average(x2oacc_ox)
             if (x2oacc_ox_cnt > 0) then
-               x2oacc_ox%data%rAttr = x2oacc_ox%data%rAttr / (x2oacc_ox_cnt*1.0_r8)
+               !x2oacc_ox%data%rAttr = x2oacc_ox%data%rAttr / (x2oacc_ox_cnt*1.0_r8)
+               ! lihuimin 2011.11.6
+               !x2oacc_ox2%data%rAttr = x2oacc_ox2%data%rAttr / (x2oacc_ox_cnt*1.0_r8)
+               ! modi end
+               ! lihuimin 2012.5.13, vectorize
+               do aindex = 1,ANUM
+                  x2oacc_ox(aindex)%data%rAttr = x2oacc_ox(aindex)%data%rAttr / (x2oacc_ox_cnt*1.0_r8)
+               enddo
+               ! modi end
             endif
             x2oacc_ox_cnt = 0
             call t_drvstopf  ('driver_ocnprep_avg')
@@ -1562,24 +2390,54 @@ subroutine ccsm_run()
                ! Map runoff to ocn, average, put in x2oacc_ox
                if (r2xacc_rx_cnt > 0) then
                   call t_drvstartf ('driver_ocnprep_ravg',barrier=mpicom_CPLID)
-                  r2xacc_rx%data%rAttr = r2xacc_rx%data%rAttr / (r2xacc_rx_cnt*1.0_r8)
+                  ! lihuimin, 2012.9.29, rof
+                  do lindex = 1,LNUM
+                     r2xacc_rx(lindex)%data%rAttr = r2xacc_rx(lindex)%data%rAttr / (r2xacc_rx_cnt*1.0_r8)
+                  enddo
+                  ! modi end
                   r2xacc_rx_cnt = 0
                   call t_drvstopf ('driver_ocnprep_ravg')
                   call t_drvstartf ('driver_ocnprep_rof2ocn',barrier=mpicom_CPLID)
-                  call map_rof2ocn_mct( cdata_rx, r2xacc_rx%data, cdata_ox, r2x_ox ) 
-                  if (do_hist_r2x) then
-                     call seq_hist_writeaux(EClock_d,'r2xacc','domr',cdata_rx,r2xacc_rx%data, &
-                          rof_nx,rof_ny,1)
-                  endif
+                  ! lihuimin, 2012.9.29, rof
+                  do lindex = 1,LNUM
+                     call map_rof2ocn_mct( cdata_rx(lindex), r2xacc_rx(lindex)%data, cdata_ox, r2x_ox(lindex) )
+                     if (do_hist_r2x) then
+                        call seq_hist_writeaux(EClock_d,'r2xacc','domr',cdata_rx(lindex),r2xacc_rx(lindex)%data, &
+                             rof_nx,rof_ny,1)
+                     endif
+                  enddo
+                  ! modi end
                   call t_drvstopf  ('driver_ocnprep_rof2ocn')
                   call t_drvstartf ('driver_ocnprep_rofcopy',barrier=mpicom_CPLID)
-                  call mct_aVect_copy(aVin=r2x_ox, aVout=x2oacc_ox%data)
+                  !call mct_aVect_copy(aVin=r2x_ox, aVout=x2oacc_ox%data)
+                  ! lihuimin 2011.11.6
+                  !call mct_aVect_copy(aVin=r2x_ox, aVout=x2oacc_ox2%data)
+                  ! modi end
+                  ! lihuimin 2012.5.13, vectorize
+                  ! lihuimin, 2012.9.29, consider multilnd and rof
+                  do aindex = 1,ANUM
+                     if (multilnd) then
+                        lindex = aindex
+                        call mct_aVect_copy(aVin=r2x_ox(lindex), aVout=x2oacc_ox(aindex)%data)
+                     else
+                        call mct_aVect_copy(aVin=r2x_ox(1), aVout=x2oacc_ox(aindex)%data)
+                     endif
+                  enddo
+                  ! modi end
                   call t_drvstopf  ('driver_ocnprep_rofcopy')
                endif
             endif
             if (info_debug > 1) then
                call t_drvstartf ('driver_ocnprep_diagav',barrier=mpicom_CPLID)
-               call seq_diag_avect_mct(cdata_ox,x2oacc_ox%data,'send ocn')
+               !call seq_diag_avect_mct(cdata_ox,x2oacc_ox%data,'send ocn')
+               ! lihuimin 2011.11.6
+               !call seq_diag_avect_mct(cdata_ox,x2oacc_ox2%data,'send2 ocn')
+               ! modi end
+               ! lihuimin 2012.5.13, vectorize
+               do aindex = 1,ANUM
+                  call seq_diag_avect_mct(cdata_ox,x2oacc_ox(aindex)%data,'send ocn')
+               enddo
+               ! modi end
                call t_drvstopf  ('driver_ocnprep_diagav')
             endif
             if (drv_threading) call seq_comm_setnthreads(nthreads_GLOID)
@@ -1593,7 +2451,15 @@ subroutine ccsm_run()
          if (iamin_CPLOCNID .and. ocn_prognostic) then
             call t_drvstartf ('DRIVER_C2O',barrier=mpicom_CPLOCNID)
             call t_drvstartf ('driver_c2o_ocnx2ocno',barrier=mpicom_CPLOCNID)
-            call map_ocnx2ocno_mct( cdata_ox, x2oacc_ox%data, cdata_oo, x2o_oo)
+            !call map_ocnx2ocno_mct( cdata_ox, x2oacc_ox%data, cdata_oo, x2o_oo)
+            ! lihuimin 2011.11.6
+            !call map_ocnx2ocno_mct( cdata_ox, x2oacc_ox2%data, cdata_oo, x2o_oo2)
+            ! modi end
+            ! lihuimin 2012.5.13, vectorize
+            do aindex = 1,ANUM
+               call map_ocnx2ocno_mct( cdata_ox, x2oacc_ox(aindex)%data, cdata_oo, x2o_oo(aindex))
+            enddo
+            ! modi end
             call t_drvstopf  ('driver_c2o_ocnx2ocno')
             call t_drvstartf ('driver_c2o_infoexch',barrier=mpicom_CPLOCNID)
             call seq_infodata_exchange(infodata,CPLOCNID,'cpl2ocn_run')
@@ -1619,14 +2485,60 @@ subroutine ccsm_run()
 
             if (lnd_prognostic) then
                call t_drvstartf ('driver_lndprep_atm2lnd',barrier=mpicom_CPLID)
-               call map_atm2lnd_mct( cdata_ax, a2x_ax, cdata_lx, a2x_lx )
+               !call map_atm2lnd_mct( cdata_ax, a2x_ax, cdata_lx, a2x_lx )
+               ! lihuimin 2011.11.4
+               !call map_atm2lnd_mct( cdata_ax2, a2x_ax2, cdata_lx, a2x_lx2 )
+               ! modi end
+               ! lihuimin 2012.5.13, vectorize
+               ! lihuimin, 2012.8.13, multilnd
+               if (multilnd) then
+                  do lindex = 1,LNUM
+                     aindex = lindex
+                     call map_atm2lnd_mct( cdata_ax(aindex), a2x_ax(aindex), cdata_lx(lindex), a2x_lx(lindex) )
+                  enddo
+               else
+                  do aindex = 1,ANUM
+                     call map_atm2lnd_mct( cdata_ax(aindex), a2x_ax(aindex), cdata_lx(1), a2x_lx(aindex) )
+                  enddo
+               endif
+               ! modi end
                call t_drvstopf  ('driver_lndprep_atm2lnd')
                call t_drvstartf ('driver_lndprep_mrgx2l',barrier=mpicom_CPLID)
-               call mrg_x2l_run_mct( cdata_lx, a2x_lx, x2l_lx )
+               !call mrg_x2l_run_mct( cdata_lx, a2x_lx, x2l_lx )
+               ! lihuimin 2011.11.5
+               !call mrg_x2l_run_mct( cdata_lx, a2x_lx2, x2l_lx2 )
+               ! modi end
+               ! lihuimin 2012.5.13, vectorize
+               ! lihuimin, 2012.8.13, multilnd
+               if (multilnd) then
+                  do lindex = 1,LNUM
+                     call mrg_x2l_run_mct( cdata_lx(lindex), a2x_lx(lindex), x2l_lx(lindex) )
+                  enddo
+               else
+                  do aindex = 1,ANUM
+                     call mrg_x2l_run_mct( cdata_lx(1), a2x_lx(aindex), x2l_lx(aindex) )
+                  enddo
+               endif
+               ! modi end
                call t_drvstopf  ('driver_lndprep_mrgx2l')
                if (info_debug > 1) then
                   call t_drvstartf ('driver_lndprep_diagav',barrier=mpicom_CPLID)
-                  call seq_diag_avect_mct(cdata_lx,x2l_lx,'send lnd')
+                  !call seq_diag_avect_mct(cdata_lx,x2l_lx,'send lnd')
+                  ! lihuimin 2011.11.6
+                  !call seq_diag_avect_mct(cdata_lx,x2l_lx2,'send2 lnd')
+                  ! modi end
+                  ! lihuimin 2012.5.13, vectorize
+                  ! lihuimin, 2012.8.13, multilnd
+                  if (multilnd) then
+                     do lindex = 1,LNUM
+                        call seq_diag_avect_mct(cdata_lx(lindex),x2l_lx(lindex),'send lnd')
+                     enddo
+                  else
+                     do aindex = 1,ANUM
+                        call seq_diag_avect_mct(cdata_lx(1),x2l_lx(aindex),'send lnd')
+                     enddo
+                  endif
+                  ! modi end
                   call t_drvstopf  ('driver_lndprep_diagav')
                endif
             endif
@@ -1651,7 +2563,24 @@ subroutine ccsm_run()
             call t_drvstartf ('DRIVER_C2L',barrier=mpicom_CPLLNDID)
             if (lnd_prognostic) then
                call t_drvstartf ('driver_c2l_lndx2lndl',barrier=mpicom_CPLLNDID)
-               call map_lndx2lndl_mct( cdata_lx, x2l_lx, cdata_ll, x2l_ll)
+               !call map_lndx2lndl_mct( cdata_lx, x2l_lx, cdata_ll, x2l_ll)
+               ! lihuimin 2011.11.6
+               !call map_lndx2lndl_mct( cdata_lx, x2l_lx2, cdata_ll, x2l_ll2)
+               ! modi end
+               ! lihuimin 2012.5.13, vectorize
+               ! lihuimin, 2012.8.13, multilnd
+               if (multilnd) then
+                  do lindex = 1,LNUM
+                     if (iamin_CPLLNDID_array(lindex)) then
+                        call map_lndx2lndl_mct( cdata_lx(lindex), x2l_lx(lindex), cdata_ll(lindex), x2l_ll(lindex))
+                     endif
+                  enddo
+               else
+                  do aindex = 1,ANUM
+                     call map_lndx2lndl_mct( cdata_lx(1), x2l_lx(aindex), cdata_ll(1), x2l_ll(aindex))
+                  enddo
+               endif
+               ! modi end
                call t_drvstopf  ('driver_c2l_lndx2lndl')
             endif
             if (glc_present .and. sno_prognostic) then
@@ -1690,17 +2619,41 @@ subroutine ccsm_run()
             call t_drvstopf  ('driver_iceprep_ocn2ice')
             
             call t_drvstartf ('driver_iceprep_atm2ice',barrier=mpicom_CPLID)
-            call map_ocn2ice_mct( cdata_ox, a2x_ox, cdata_ix, a2x_ix )
+            !call map_ocn2ice_mct( cdata_ox, a2x_ox, cdata_ix, a2x_ix )
+            ! lihuimin 2011.11.4
+            !call map_ocn2ice_mct( cdata_ox, a2x_ox2, cdata_ix, a2x_ix2 )
+            ! modi end
+            ! lihuimin 2012.5.13, vectorize
+            do aindex = 1,ANUM
+               call map_ocn2ice_mct( cdata_ox, a2x_ox(aindex), cdata_ix, a2x_ix(aindex) )
+            enddo
+            ! modi end
 !tcx fails            call map_atm2ice_mct( cdata_ax, a2x_ax, cdata_ix, a2x_ix )
             call t_drvstopf  ('driver_iceprep_atm2ice')
             
             call t_drvstartf ('driver_iceprep_mrgx2i',barrier=mpicom_CPLID)
-            call mrg_x2i_run_mct( cdata_ix, a2x_ix, o2x_ix, x2i_ix )
+            !call mrg_x2i_run_mct( cdata_ix, a2x_ix, o2x_ix, x2i_ix )
+            ! lihuimin 2011.11.5
+            !call mrg_x2i_run_mct( cdata_ix, a2x_ix2, o2x_ix, x2i_ix2 )
+            ! modi end
+            ! lihuimin 2012.5.13, vectorize
+            do aindex = 1,ANUM
+               call mrg_x2i_run_mct( cdata_ix, a2x_ix(aindex), o2x_ix, x2i_ix(aindex) )
+            enddo
+            ! modi end
             call t_drvstopf  ('driver_iceprep_mrgx2i')
 
             if (info_debug > 1) then
                call t_drvstartf ('driver_iceprep_diagav',barrier=mpicom_CPLID)
-               call seq_diag_avect_mct(cdata_ix,x2i_ix,'send ice')
+               !call seq_diag_avect_mct(cdata_ix,x2i_ix,'send ice')
+               ! lihuimin 2011.11.6
+               !call seq_diag_avect_mct(cdata_ix,x2i_ix2,'send2 ice')
+               ! modi end
+               ! lihuimin 2012.5.13, vectorize
+               do aindex = 1,ANUM
+                  call seq_diag_avect_mct(cdata_ix,x2i_ix(aindex),'send ice')
+               enddo
+               ! modi end
                call t_drvstopf  ('driver_iceprep_diagav')
             endif
             if (drv_threading) call seq_comm_setnthreads(nthreads_GLOID)
@@ -1714,7 +2667,15 @@ subroutine ccsm_run()
          if (iamin_CPLICEID .and. ice_prognostic) then
             call t_drvstartf ('DRIVER_C2I',barrier=mpicom_CPLICEID)
             call t_drvstartf ('driver_c2i_icex2icei',barrier=mpicom_CPLICEID)
-            call map_icex2icei_mct( cdata_ix, x2i_ix, cdata_ii, x2i_ii)
+            !call map_icex2icei_mct( cdata_ix, x2i_ix, cdata_ii, x2i_ii)
+            ! lihuimin 2011.11.6
+            !call map_icex2icei_mct( cdata_ix, x2i_ix2, cdata_ii, x2i_ii2)
+            ! modi end
+            ! lihuimin 2012.5.13, vectroize
+            do aindex = 1,ANUM
+               call map_icex2icei_mct( cdata_ix, x2i_ix(aindex), cdata_ii, x2i_ii(aindex))
+            enddo
+            ! modi end
             call t_drvstopf  ('driver_c2i_icex2icei')
             call t_drvstartf ('driver_c2i_infoexch',barrier=mpicom_CPLICEID)
             call seq_infodata_exchange(infodata,CPLICEID,'cpl2ice_run')
@@ -1736,8 +2697,13 @@ subroutine ccsm_run()
          endif
          call t_drvstartf ('DRIVER_OCN_RUN',barrier=mpicom_OCNID)
          if (drv_threading) call seq_comm_setnthreads(nthreads_OCNID)
-         if (ocn_prognostic) call mct_avect_vecmult(x2o_oo,drv2mdl_oo,seq_flds_x2o_fluxes)
-         call ocn_run_mct( EClock_o, cdata_oo, x2o_oo, o2x_oo)
+         ! lihuimin 2011.11.7 do ensemble
+         ! lihuimin 2012.5.13, vectorize
+         call doensemble(x2o_oo)
+         !call doensemble_t(x2o_oo(1), x2o_oo(2))
+         if (ocn_prognostic) call mct_avect_vecmult(x2o_oo(1),drv2mdl_oo,seq_flds_x2o_fluxes)   ! x2o_oo -> x2o_oo(i)
+         ! modi end
+         call ocn_run_mct( EClock_o, cdata_oo, x2o_oo(1), o2x_oo)
          call mct_avect_vecmult(o2x_oo,mdl2drv_oo,seq_flds_o2x_fluxes)
          if (drv_threading) call seq_comm_setnthreads(nthreads_GLOID)
          call t_drvstopf  ('DRIVER_OCN_RUN')
@@ -1755,8 +2721,13 @@ subroutine ccsm_run()
          endif
          call t_drvstartf ('DRIVER_ICE_RUN',barrier=mpicom_ICEID)
          if (drv_threading) call seq_comm_setnthreads(nthreads_ICEID)
-         if (ice_prognostic) call mct_avect_vecmult(x2i_ii,drv2mdl_ii,seq_flds_x2i_fluxes)
-         call ice_run_mct( EClock_i, cdata_ii, x2i_ii, i2x_ii)
+         ! lihuimin 2011.11.7 do ensemble
+         ! lihuimin 2012.5.13, vectorize
+         call doensemble(x2i_ii)
+         !call doensemble_t(x2i_ii(1), x2i_ii(2))
+         if (ice_prognostic) call mct_avect_vecmult(x2i_ii(1),drv2mdl_ii,seq_flds_x2i_fluxes)   ! x2i_ii -> x2i_ii(1)
+         ! modi end
+         call ice_run_mct( EClock_i, cdata_ii, x2i_ii(1), i2x_ii)
          call mct_avect_vecmult(i2x_ii,mdl2drv_ii,seq_flds_i2x_fluxes)
          if (drv_threading) call seq_comm_setnthreads(nthreads_GLOID)
          call t_drvstopf  ('DRIVER_ICE_RUN')
@@ -1775,19 +2746,63 @@ subroutine ccsm_run()
          endif
          call t_drvstartf ('DRIVER_LND_RUN',barrier=mpicom_LNDID)
          if (drv_threading) call seq_comm_setnthreads(nthreads_LNDID)
+         ! lihuimin 2011.11.7
+         ! lihuimin 2012.5.13, vectorize
+         ! lihuimin, 2012.8.13, multilnd
+         if (multilnd) then
+            !
+         else
+            call doensemble(x2l_ll)
+         endif
+         !call doensemble_t(x2l_ll(1), x2l_ll(2))
+         ! modi end
          if (lnd_prognostic) then
-            call mct_avect_vecmult(x2l_ll,drv2mdl_ll,seq_flds_x2l_fluxes)
+            ! lihuimin, 2012.8.13, multilnd
+            if (multilnd) then
+               do lindex = 1,LNUM
+                  if (iamin_LNDID_array(lindex)) then
+                     call mct_avect_vecmult(x2l_ll(lindex),pArray_l(lindex)%drv2mdl_ll,seq_flds_x2l_fluxes)
+                  endif
+               enddo
+            else
+               call mct_avect_vecmult(x2l_ll(1),pArray_l(1)%drv2mdl_ll,seq_flds_x2l_fluxes)    ! x2l_ll -> x2l_ll(1)
+            endif
+            ! modi end
          endif
          if (sno_prognostic) then
             call mct_avect_vecmult(x2s_ss,drv2mdl_ss,seq_flds_x2s_fluxes)
          endif
-         call lnd_run_mct( EClock_l, cdata_ll, x2l_ll, l2x_ll, &
-                                     cdata_rr,         r2x_rr, &
-                                     cdata_ss, x2s_ss, s2x_ss)
-         call mct_avect_vecmult(l2x_ll,mdl2drv_ll,seq_flds_l2x_fluxes)
-         if (rof_present) then
-            call mct_avect_vecmult(r2x_rr,mdl2drv_rr,seq_flds_r2x_fluxes)
+
+
+         ! lihuimin, 2012.8.13, multilnd
+         if (multilnd) then
+            do lindex = 1,LNUM
+               if (iamin_LNDID_array(lindex)) then
+                  call lnd_run_mct( EClock_l, cdata_ll(lindex), x2l_ll(lindex), l2x_ll(lindex), &
+                                              cdata_rr(lindex),                 r2x_rr(lindex), &
+                                              cdata_ss, x2s_ss, s2x_ss, lindex)
+                  call mct_avect_vecmult(l2x_ll(lindex),pArray_l(lindex)%mdl2drv_ll,seq_flds_l2x_fluxes)
+               endif
+            enddo
+         else
+            call lnd_run_mct( EClock_l, cdata_ll(1), x2l_ll(1), l2x_ll(1), &         ! x2l_ll -> x2l_ll(1)
+                                        cdata_rr(1),            r2x_rr(1), &
+                                        cdata_ss, x2s_ss, s2x_ss, 1)
+            call mct_avect_vecmult(l2x_ll(1),pArray_l(1)%mdl2drv_ll,seq_flds_l2x_fluxes)
          endif
+         ! modi end
+
+
+         if (rof_present) then
+            ! lihuimin, 2012.9.29, rof
+            do lindex = 1,LNUM
+               ! lihuimin, 2012.12.27, fix bug, add judgement
+               if (iamin_LNDID_array(lindex)) then
+                  call mct_avect_vecmult(r2x_rr(lindex),pArray_r(lindex)%mdl2drv_rr,seq_flds_r2x_fluxes)
+               endif
+            enddo
+         endif
+
          if (sno_present) then
             call mct_avect_vecmult(s2x_ss,mdl2drv_ss,seq_flds_s2x_fluxes)
          endif
@@ -1843,7 +2858,15 @@ subroutine ccsm_run()
 
             ! Merge ocn inputs
             call t_drvstartf ('driver_atmocnp_mrgx2o',barrier=mpicom_CPLID)
-            call mrg_x2o_run_mct( cdata_ox, a2x_ox, i2x_ox, xao_ox, fractions_ox, x2o_ox )
+            !call mrg_x2o_run_mct( cdata_ox, a2x_ox, i2x_ox, xao_ox, fractions_ox, x2o_ox )
+            ! lihuimin 2011.11.4
+            !call mrg_x2o_run_mct( cdata_ox, a2x_ox2, i2x_ox, xao_ox2, fractions_ox, x2o_ox2 )
+            ! modi end
+            ! lihuimin 2012.5.13, vectroize
+            do aindex = 1,ANUM
+               call mrg_x2o_run_mct( cdata_ox, a2x_ox(aindex), i2x_ox, xao_ox(aindex), fractions_ox, x2o_ox(aindex) )
+            enddo
+            ! modi end
             call t_drvstopf  ('driver_atmocnp_mrgx2o')
 
             ! Accumulate ocn inputs
@@ -1851,9 +2874,25 @@ subroutine ccsm_run()
             call t_drvstartf ('driver_atmocnp_accum',barrier=mpicom_CPLID)
 !     !         call mct_accum_accumulate(x2o_ox, x2oacc_ox)
             if (x2oacc_ox_cnt == 0) then
-               x2oacc_ox%data%rAttr = x2o_ox%rAttr
+               !x2oacc_ox%data%rAttr = x2o_ox%rAttr
+               ! lihuimin 2011.11.6
+               !x2oacc_ox2%data%rAttr = x2o_ox2%rAttr
+               ! modi end
+               ! lihuimin 2012.5.13, vectroize
+               do aindex = 1,ANUM
+                  x2oacc_ox(aindex)%data%rAttr = x2o_ox(aindex)%rAttr
+               enddo
+               ! modi end
             else
-               x2oacc_ox%data%rAttr = x2oacc_ox%data%rAttr + x2o_ox%rAttr
+               !x2oacc_ox%data%rAttr = x2oacc_ox%data%rAttr + x2o_ox%rAttr
+               ! lihuimin 2011.11.6
+               !x2oacc_ox2%data%rAttr = x2oacc_ox2%data%rAttr + x2o_ox2%rAttr
+               ! modi end
+               ! lihuimin 2012.5.13, vectroize
+               do aindex = 1,ANUM
+                  x2oacc_ox(aindex)%data%rAttr = x2oacc_ox(aindex)%data%rAttr + x2o_ox(aindex)%rAttr
+               enddo
+               ! modi end
             endif
             x2oacc_ox_cnt = x2oacc_ox_cnt + 1
             call t_drvstopf  ('driver_atmocnp_accum')
@@ -1862,15 +2901,47 @@ subroutine ccsm_run()
          ! Compute atm/ocn fluxes (virtual "recv" from ocn)
          call t_drvstartf ('driver_atmocnp_flux',barrier=mpicom_CPLID)
          if (trim(aoflux_grid) == 'ocn') then
-            call seq_flux_atmocn_mct( cdata_ox, a2x_ox, o2x_ox, xao_ox)
-            call seq_flux_ocnalb_mct(cdata_ox,xao_ox,fractions_ox)
+            !call seq_flux_atmocn_mct( cdata_ox, a2x_ox, o2x_ox, xao_ox)
+            !call seq_flux_ocnalb_mct(cdata_ox,xao_ox,fractions_ox)
+            ! lihuimin 2011.11.5
+            !call seq_flux_atmocn_mct( cdata_ox, a2x_ox2, o2x_ox, xao_ox2)
+            !call seq_flux_ocnalb_mct(cdata_ox,xao_ox2,fractions_ox)
+            ! modi end
+            ! lihuimin 2012.5.13, vectroize
+            do aindex = 1,ANUM
+               call seq_flux_atmocn_mct( cdata_ox, a2x_ox(aindex), o2x_ox, xao_ox(aindex))
+               call seq_flux_ocnalb_mct(cdata_ox,xao_ox(aindex),fractions_ox)
+            enddo
+            ! modi end
          else if (trim(aoflux_grid) == 'atm') then
-            call seq_flux_atmocn_mct( cdata_ax, a2x_ax, o2x_ax, xao_ax)
-            call seq_flux_ocnalb_mct(cdata_ox,xao_ox,fractions_ox)
+            !call seq_flux_atmocn_mct( cdata_ax, a2x_ax, o2x_ax, xao_ax)
+            !call seq_flux_ocnalb_mct(cdata_ox,xao_ox,fractions_ox)
+            ! lihuimin 2011.11.5
+            !call seq_flux_atmocn_mct( cdata_ax2, a2x_ax2, o2x_ax2, xao_ax2)
+            !call seq_flux_ocnalb_mct(cdata_ox,xao_ox2,fractions_ox)
+            ! modi end
+            ! lihuimin 2012.5.13, vectroize
+            do aindex = 1,ANUM
+               call seq_flux_atmocn_mct( cdata_ax(aindex), a2x_ax(aindex), o2x_ax(aindex), xao_ax(aindex))
+               call seq_flux_ocnalb_mct(cdata_ox,xao_ox(aindex),fractions_ox)
+            enddo
+            ! modi end
          else if (trim(aoflux_grid) == 'exch') then
-            call seq_flux_atmocnexch_mct( cdata_ax, cdata_ox, a2x_ax, o2x_ox, xao_ax, xao_ox, &
-                                       fractions_ax, fractions_ox)
-            call seq_flux_ocnalb_mct(cdata_ox,xao_ox,fractions_ox)
+            !call seq_flux_atmocnexch_mct( cdata_ax, cdata_ox, a2x_ax, o2x_ox, xao_ax, xao_ox, &
+            !                           fractions_ax, fractions_ox)
+            !call seq_flux_ocnalb_mct(cdata_ox,xao_ox,fractions_ox)
+            ! lihuimin 2011.11.5
+            !call seq_flux_atmocnexch_mct( cdata_ax2, cdata_ox, a2x_ax2, o2x_ox, xao_ax2, xao_ox2, &
+            !                           fractions_ax2, fractions_ox)
+            !call seq_flux_ocnalb_mct(cdata_ox,xao_ox2,fractions_ox)
+            ! modi end
+            ! lihuimin 2012.5.13, vectroize
+            do aindex = 1,ANUM
+               call seq_flux_atmocnexch_mct( cdata_ax(aindex), cdata_ox, a2x_ax(aindex), o2x_ox, xao_ax(aindex), xao_ox(aindex), &
+                                             fractions_ax(aindex), fractions_ox)
+               call seq_flux_ocnalb_mct(cdata_ox,xao_ox(aindex),fractions_ox)
+            enddo
+            ! modi end
          endif  ! aoflux_grid
          call t_drvstopf  ('driver_atmocnp_flux')
          
@@ -1880,8 +2951,19 @@ subroutine ccsm_run()
 ! due to the masking of the xao_ax data and the fact that a2oS is bilinear
 !            call map_atm2ocn_mct( cdata_ax, xao_ax, cdata_ox, xao_ox, &
 !                                  fluxlist=seq_flds_xao_fluxes, statelist=seq_flds_xao_states)
-            call map_atm2ocn_mct( cdata_ax, xao_ax, cdata_ox, xao_ox, &
-                                   fluxlist=seq_flds_xao_states//":"//seq_flds_xao_fluxes)
+
+            !call map_atm2ocn_mct( cdata_ax, xao_ax, cdata_ox, xao_ox, &
+            !                       fluxlist=seq_flds_xao_states//":"//seq_flds_xao_fluxes)
+            ! lihuimin 2011.11.5
+            !call map_atm2ocn_mct( cdata_ax2, xao_ax2, cdata_ox, xao_ox2, &
+            !                       fluxlist=seq_flds_xao_states//":"//seq_flds_xao_fluxes)
+            ! modi end
+            ! lihuimin 2012.5.13, vectroize
+            do aindex = 1,ANUM
+               call map_atm2ocn_mct( cdata_ax(aindex), xao_ax(aindex), cdata_ox, xao_ox(aindex), &
+                                      fluxlist=seq_flds_xao_states//":"//seq_flds_xao_fluxes)
+            enddo
+            ! modi end
             call t_drvstopf  ('driver_atmocnp_atm2ocn')
          endif
 
@@ -1899,12 +2981,25 @@ subroutine ccsm_run()
             call t_drvstartf ('DRIVER_L2C',barrier=mpicom_CPLLNDID)
             if (lnd_present) then
                call t_drvstartf ('driver_l2c_lndl2lndx',barrier=mpicom_CPLLNDID)
-               call map_lndl2lndx_mct( cdata_ll, l2x_ll, cdata_lx, l2x_lx)
+               ! lihuimin, 2012.8.13, vectorized
+               do lindex = 1,LNUM
+                  if (iamin_CPLLNDID_array(lindex)) then
+                     call map_lndl2lndx_mct( cdata_ll(lindex), l2x_ll(lindex), cdata_lx(lindex), l2x_lx(lindex))
+                  endif
+               enddo
+               ! modi end
                call t_drvstopf  ('driver_l2c_lndl2lndx')
             endif
             if (rof_present) then
                call t_drvstartf ('driver_l2c_rofr2rofx',barrier=mpicom_CPLLNDID)
-               call map_rofr2rofx_mct( cdata_rr, r2x_rr, cdata_rx, r2x_rx)
+               ! lihuimin, 2012.9.29, rof
+               do lindex = 1,LNUM
+                  ! lihuimin, 2012.12.28, fix bug, communicatior judgement
+                  if (iamin_CPLLNDID_array(lindex)) then
+                     call map_rofr2rofx_mct( cdata_rr(lindex), r2x_rr(lindex), cdata_rx(lindex), r2x_rx(lindex))
+                  endif
+               enddo
+               ! modi end
                call t_drvstopf  ('driver_l2c_rofr2rofx')
             endif
             if (sno_present .and. glc_prognostic .and. glcrun_alarm) then
@@ -1918,16 +3013,25 @@ subroutine ccsm_run()
             call t_drvstopf  ('DRIVER_L2C')
          endif
 
+
          if (iamin_CPLID) then
             call t_drvstartf  ('DRIVER_LNDPOST',cplrun=.true.,barrier=mpicom_CPLID)
             if (drv_threading) call seq_comm_setnthreads(nthreads_CPLID)
             if (info_debug > 1) then
                call t_drvstartf ('driver_lndpost_diagav',barrier=mpicom_CPLID)
                if (lnd_present) then
-                  call seq_diag_avect_mct(cdata_lx,l2x_lx,'recv lnd')
+                  ! lihuimin, 2012.8.13, vectorized
+                  do lindex = 1,LNUM
+                     call seq_diag_avect_mct(cdata_lx(lindex),l2x_lx(lindex),'recv lnd')
+                  enddo
+                  ! modi end
                endif
                if (rof_present) then
-                  call seq_diag_avect_mct(cdata_rx,r2x_rx,'recv roff')
+                  ! lihuimin, 2012.9.29, rof
+                  do lindex = 1,LNUM
+                     call seq_diag_avect_mct(cdata_rx(lindex),r2x_rx(lindex),'recv roff')
+                  enddo
+                  ! modi end
                endif
                if (sno_present .and. glc_prognostic .and. glcrun_alarm) then
                   call seq_diag_avect_mct(cdata_sx,s2x_sx,'recv sno')
@@ -1939,11 +3043,15 @@ subroutine ccsm_run()
                ! better to flux correct here if flux_epbalfact varies
                ! over the accumulation period
                call seq_infodata_GetData(infodata, flux_epbalfact = flux_epbalfact)
-               if (r2xacc_rx_cnt == 0) then
-                  r2xacc_rx%data%rAttr = r2x_rx%rAttr * flux_epbalfact
-               else
-                  r2xacc_rx%data%rAttr = r2xacc_rx%data%rAttr + r2x_rx%rAttr * flux_epbalfact
-               endif
+               ! lihuimin, 2012.9.29, rof
+               do lindex = 1,LNUM
+                  if (r2xacc_rx_cnt == 0) then
+                     r2xacc_rx(lindex)%data%rAttr = r2x_rx(lindex)%rAttr * flux_epbalfact
+                  else
+                     r2xacc_rx(lindex)%data%rAttr = r2xacc_rx(lindex)%data%rAttr + r2x_rx(lindex)%rAttr * flux_epbalfact
+                  endif
+               enddo
+               ! modi end
                r2xacc_rx_cnt = r2xacc_rx_cnt + 1
                call t_drvstopf ('driver_lndpost_raccum')
             endif
@@ -2006,17 +3114,58 @@ subroutine ccsm_run()
       if (iamin_CPLID .and. do_budgets) then
          call t_drvstartf ('DRIVER_BUDGET1',cplrun=.true.,budget=.true.,barrier=mpicom_CPLID)
          if (lnd_present) then
-            call seq_diag_lnd_mct(dom_lx, fractions_lx, l2x_l=l2x_lx, x2l_l=x2l_lx)
+            !call seq_diag_lnd_mct(dom_lx, fractions_lx, l2x_l=l2x_lx, x2l_l=x2l_lx)
+            ! lihuimin 2011.11.6
+            !call seq_diag_lnd_mct(dom_lx, fractions_lx, l2x_l=l2x_lx, x2l_l=x2l_lx2)
+            ! modi end
+            ! lihuimin 2012.5.13, vectroize
+            ! lihuimin, 2012.8.13, multilnd
+            if (multilnd) then
+               do lindex = 1,LNUM
+                  call seq_diag_lnd_mct(dom_lx(lindex), fractions_lx(lindex), l2x_l=l2x_lx(lindex), x2l_l=x2l_lx(lindex))
+               enddo
+            else
+               do aindex = 1,ANUM
+                  call seq_diag_lnd_mct(dom_lx(1), fractions_lx(1), l2x_l=l2x_lx(1), x2l_l=x2l_lx(aindex))
+               enddo
+            endif
+            ! modi end
          endif
          if (rof_present) then
-            call seq_diag_rtm_mct(dom_rx, r2x_r=r2x_rx)
+            ! lihuimin, 2012.9.29, rof
+            do lindex = 1,LNUM
+               call seq_diag_rtm_mct(dom_rx(lindex), r2x_r=r2x_rx(lindex))
+            enddo
+            ! modi end
          endif
          if (ocn_present) then
          !  call seq_diag_ocn_mct(dom_ox, fractions_ox, o2x_o=o2x_ox, x2o_o=x2o_ox, xao_o=xao_ox)
-            call seq_diag_ocn_mct(dom_ox, fractions_ox, o2x_o=o2x_ox, x2o_o=x2o_ox, xao_o=xao_ox, r2x_o=r2x_ox)
+            !call seq_diag_ocn_mct(dom_ox, fractions_ox, o2x_o=o2x_ox, x2o_o=x2o_ox, xao_o=xao_ox, r2x_o=r2x_ox)
+            ! lihuimin 2011.11.6
+            !call seq_diag_ocn_mct(dom_ox, fractions_ox, o2x_o=o2x_ox, x2o_o=x2o_ox2, xao_o=xao_ox2, r2x_o=r2x_ox)
+            ! modi end
+            ! lihuimin 2012.5.13, vectroize
+            do aindex = 1,ANUM
+               ! lihuimin, 2012.9.29, rof, r2x_ox
+               if (multilnd) then
+                  lindex = aindex
+               else
+                  lindex = 1
+               endif
+               call seq_diag_ocn_mct(dom_ox, fractions_ox, o2x_o=o2x_ox, x2o_o=x2o_ox(aindex), xao_o=xao_ox(aindex), r2x_o=r2x_ox(lindex))
+            enddo
+            ! modi end
          endif
          if (ice_present) then
-            call seq_diag_ice_mct(dom_ix, fractions_ix, x2i_i=x2i_ix)
+            !call seq_diag_ice_mct(dom_ix, fractions_ix, x2i_i=x2i_ix)
+            ! lihuimin 2011.11.6
+            !call seq_diag_ice_mct(dom_ix, fractions_ix, x2i_i=x2i_ix2)
+            ! modi end
+            ! lihuimin 2012.5.13, vectroize
+            do aindex = 1,ANUM
+               call seq_diag_ice_mct(dom_ix, fractions_ix, x2i_i=x2i_ix(aindex))
+            enddo
+            ! modi end
          endif
          call t_drvstopf  ('DRIVER_BUDGET1',cplrun=.true.,budget=.true.)
       endif
@@ -2060,11 +3209,39 @@ subroutine ccsm_run()
          call t_drvstartf ('DRIVER_FRACSET',cplrun=.true.,barrier=mpicom_CPLID)
          if (drv_threading) call seq_comm_setnthreads(nthreads_CPLID)
          call t_drvstartf ('driver_fracset_fracset',barrier=mpicom_CPLID)
-         call seq_frac_set(i2x_ix, &
-                           cdata_ax, cdata_ix, cdata_lx, cdata_ox, cdata_gx, &
-                           ice_present, ocn_present, lnd_present, glc_present,  &
-                           fractions_ax, fractions_ix, fractions_lx, fractions_ox, &
-                           fractions_gx)
+         !call seq_frac_set(i2x_ix, &
+         !                  cdata_ax, cdata_ix, cdata_lx, cdata_ox, cdata_gx, &
+         !                  ice_present, ocn_present, lnd_present, glc_present,  &
+         !                  fractions_ax, fractions_ix, fractions_lx, fractions_ox, &
+         !                  fractions_gx)
+         ! lihuimin TO_DO .... consider whether it's needed
+         !call seq_frac_set(i2x_ix, &
+         !                  cdata_ax2, cdata_ix, cdata_lx, cdata_ox, cdata_gx, &
+         !                  ice_present, ocn_present, lnd_present, glc_present,  &
+         !                  fractions_ax2, fractions_ix, fractions_lx, fractions_ox, &
+         !                  fractions_gx)
+         ! modi end
+         ! lihuimin 2012.5.13, vectroize
+         ! lihuimin, 2012.8.13, multilnd
+         if (multilnd) then
+            do lindex = 1,LNUM
+               aindex = lindex
+               call seq_frac_set(i2x_ix, &
+                                 cdata_ax(aindex), cdata_ix, cdata_lx(lindex), cdata_ox, cdata_gx, &
+                                 ice_present, ocn_present, lnd_present, glc_present,  &
+                                 fractions_ax(aindex), fractions_ix, fractions_lx(lindex), fractions_ox, &
+                                 fractions_gx)
+            enddo
+         else
+            do aindex = 1,ANUM
+               call seq_frac_set(i2x_ix, &
+                                 cdata_ax(aindex), cdata_ix, cdata_lx(1), cdata_ox, cdata_gx, &
+                                 ice_present, ocn_present, lnd_present, glc_present,  &
+                                 fractions_ax(aindex), fractions_ix, fractions_lx(1), fractions_ox, &
+                                 fractions_gx)
+            enddo
+         endif
+         ! modi end
          call t_drvstopf  ('driver_fracset_fracset')
          if (drv_threading) call seq_comm_setnthreads(nthreads_GLOID)
          call t_drvstopf  ('DRIVER_FRACSET',cplrun=.true.)
@@ -2087,45 +3264,130 @@ subroutine ccsm_run()
             if (ocn_present) then
                if (trim(aoflux_grid) == 'ocn') then
                   call t_drvstartf ('driver_atmprep_ocn2atm2',barrier=mpicom_CPLID)
-                  call map_ocn2atm_mct( cdata_ox, xao_ox, cdata_ax, xao_ax, &
-                                        fractions_o=fractions_ox, fractions_a=fractions_ax, &
-                                        fluxlist=seq_flds_xao_fluxes, statelist=seq_flds_xao_states )
+                  !call map_ocn2atm_mct( cdata_ox, xao_ox, cdata_ax, xao_ax, &
+                  !                      fractions_o=fractions_ox, fractions_a=fractions_ax, &
+                  !                      fluxlist=seq_flds_xao_fluxes, statelist=seq_flds_xao_states )
+                  ! lihuimin 2011.11.4
+                  !call map_ocn2atm_mct( cdata_ox, xao_ox2, cdata_ax2, xao_ax2, &
+                  !                      fractions_o=fractions_ox, fractions_a=fractions_ax2, &
+                  !                      fluxlist=seq_flds_xao_fluxes, statelist=seq_flds_xao_states )
+                  ! modi end
+                  ! lihuimin 2012.5.13, vectroize
+                  do aindex = 1,ANUM
+                     call map_ocn2atm_mct( cdata_ox, xao_ox(aindex), cdata_ax(aindex), xao_ax(aindex), &
+                                           fractions_o=fractions_ox, fractions_a=fractions_ax(aindex), &
+                                           fluxlist=seq_flds_xao_fluxes, statelist=seq_flds_xao_states )
+                  enddo
+                  ! modi end
                   call t_drvstopf  ('driver_atmprep_ocn2atm2')
                endif
             endif
             if (ocn_present) then
                call t_drvstartf ('driver_atmprep_ocn2atm1',barrier=mpicom_CPLID)
-               call map_ocn2atm_mct( cdata_ox, o2x_ox, cdata_ax, o2x_ax, &
-                                     fractions_o=fractions_ox, fractions_a=fractions_ax, &
-                                     statelist=seq_flds_o2x_states )
-               call map_ocn2atm_mct( cdata_ox, o2x_ox, cdata_ax, o2x_ax, &
-                                     fluxlist=seq_flds_o2x_fluxes )
-               call map_ocn2atm_mct( cdata_ox, xao_ox, cdata_ax, xao_ax, &
-                                     fractions_o=fractions_ox, fractions_a=fractions_ax, &
-                                     statelist=seq_flds_xao_albedo )
+               !call map_ocn2atm_mct( cdata_ox, o2x_ox, cdata_ax, o2x_ax, &
+               !                      fractions_o=fractions_ox, fractions_a=fractions_ax, &
+               !                      statelist=seq_flds_o2x_states )
+               !call map_ocn2atm_mct( cdata_ox, o2x_ox, cdata_ax, o2x_ax, &
+               !                      fluxlist=seq_flds_o2x_fluxes )
+               !call map_ocn2atm_mct( cdata_ox, xao_ox, cdata_ax, xao_ax, &
+               !                      fractions_o=fractions_ox, fractions_a=fractions_ax, &
+               !                      statelist=seq_flds_xao_albedo )
+               ! lihuimin 2011.11.4
+               !call map_ocn2atm_mct( cdata_ox, o2x_ox, cdata_ax2, o2x_ax2, &
+               !                      fractions_o=fractions_ox, fractions_a=fractions_ax2, &
+               !                      statelist=seq_flds_o2x_states )
+               !call map_ocn2atm_mct( cdata_ox, o2x_ox, cdata_ax2, o2x_ax2, &
+               !                      fluxlist=seq_flds_o2x_fluxes )
+               !call map_ocn2atm_mct( cdata_ox, xao_ox2, cdata_ax2, xao_ax2, &
+               !                      fractions_o=fractions_ox, fractions_a=fractions_ax2, &
+               !                      statelist=seq_flds_xao_albedo )
+               ! modi end
+               ! lihuimin 2012.5.13, vectroize
+               do aindex = 1,ANUM
+                  call map_ocn2atm_mct( cdata_ox, o2x_ox, cdata_ax(aindex), o2x_ax(aindex), &
+                                        fractions_o=fractions_ox, fractions_a=fractions_ax(aindex), &
+                                        statelist=seq_flds_o2x_states )
+                  call map_ocn2atm_mct( cdata_ox, o2x_ox, cdata_ax(aindex), o2x_ax(aindex), &
+                                        fluxlist=seq_flds_o2x_fluxes )
+                  call map_ocn2atm_mct( cdata_ox, xao_ox(aindex), cdata_ax(aindex), xao_ax(aindex), &
+                                        fractions_o=fractions_ox, fractions_a=fractions_ax(aindex), &
+                                        statelist=seq_flds_xao_albedo )
+               enddo
+               ! modi end
                call t_drvstopf  ('driver_atmprep_ocn2atm1')
             endif
             if (ice_present) then
                call t_drvstartf ('driver_atmprep_ice2atm',barrier=mpicom_CPLID)
-               call map_ice2atm_mct( cdata_ix, i2x_ix, cdata_ax, i2x_ax, &
-                                     fractions_i=fractions_ix, fractions_a=fractions_ax, &
-                                     fluxlist=seq_flds_i2x_fluxes, statelist=seq_flds_i2x_states )
+               !call map_ice2atm_mct( cdata_ix, i2x_ix, cdata_ax, i2x_ax, &
+               !                      fractions_i=fractions_ix, fractions_a=fractions_ax, &
+               !                      fluxlist=seq_flds_i2x_fluxes, statelist=seq_flds_i2x_states )
+               ! lihuimin 2011.11.4
+               !call map_ice2atm_mct( cdata_ix, i2x_ix, cdata_ax2, i2x_ax2, &
+               !                      fractions_i=fractions_ix, fractions_a=fractions_ax2, &
+               !                      fluxlist=seq_flds_i2x_fluxes, statelist=seq_flds_i2x_states )
+               ! modi end
+               ! lihuimin 2012.5.13, vectroize
+               do aindex = 1,ANUM
+                  call map_ice2atm_mct( cdata_ix, i2x_ix, cdata_ax(aindex), i2x_ax(aindex), &
+                                        fractions_i=fractions_ix, fractions_a=fractions_ax(aindex), &
+                                        fluxlist=seq_flds_i2x_fluxes, statelist=seq_flds_i2x_states )
+               enddo
+               ! modi end
                call t_drvstopf  ('driver_atmprep_ice2atm')
             endif
             if (lnd_present) then
                call t_drvstartf ('driver_atmprep_lnd2atm',barrier=mpicom_CPLID)
-               call map_lnd2atm_mct( cdata_lx, l2x_lx, cdata_ax, l2x_ax , &
-                                     fractions_l=fractions_lx, fractions_a=fractions_ax, &
-                                     fluxlist=seq_flds_l2x_fluxes, statelist=seq_flds_l2x_states )
+               !call map_lnd2atm_mct( cdata_lx, l2x_lx, cdata_ax, l2x_ax , &
+               !                      fractions_l=fractions_lx, fractions_a=fractions_ax, &
+               !                      fluxlist=seq_flds_l2x_fluxes, statelist=seq_flds_l2x_states )
+               ! lihuimin 2011.11.4
+               !call map_lnd2atm_mct( cdata_lx, l2x_lx, cdata_ax2, l2x_ax2 , &
+               !                      fractions_l=fractions_lx, fractions_a=fractions_ax2, &
+               !                      fluxlist=seq_flds_l2x_fluxes, statelist=seq_flds_l2x_states )
+               ! modi end
+               ! lihuimin 2012.5.13, vectroize
+               ! lihuimin, 2012.8.13, multilnd
+               if (multilnd) then
+                  do lindex = 1,LNUM
+                        aindex = lindex
+                        call map_lnd2atm_mct( cdata_lx(lindex), l2x_lx(lindex), cdata_ax(aindex), l2x_ax(aindex) , &
+                                              fractions_l=fractions_lx(lindex), fractions_a=fractions_ax(aindex), &
+                                              fluxlist=seq_flds_l2x_fluxes, statelist=seq_flds_l2x_states )
+                  enddo
+               else
+                  do aindex = 1,ANUM
+                        call map_lnd2atm_mct( cdata_lx(1), l2x_lx(1), cdata_ax(aindex), l2x_ax(aindex) , &
+                                              fractions_l=fractions_lx(1), fractions_a=fractions_ax(aindex), &
+                                              fluxlist=seq_flds_l2x_fluxes, statelist=seq_flds_l2x_states )
+                  enddo
+               endif
+               ! modi end
                call t_drvstopf  ('driver_atmprep_lnd2atm')
             endif
             call t_drvstartf ('driver_atmprep_mrgx2a',barrier=mpicom_CPLID)
-            call mrg_x2a_run_mct( cdata_ax, l2x_ax, o2x_ax, xao_ax, i2x_ax, fractions_ax, x2a_ax )
+            !call mrg_x2a_run_mct( cdata_ax, l2x_ax, o2x_ax, xao_ax, i2x_ax, fractions_ax, x2a_ax )
+            ! lihuimin 2011.11.4
+            !call mrg_x2a_run_mct( cdata_ax2, l2x_ax2, o2x_ax2, xao_ax2, i2x_ax2, fractions_ax2, x2a_ax2 )
+            ! modi end
+            ! lihuimin 2012.5.13, vectroize
+            ! TODO, here remain the same
+            do aindex = 1,ANUM
+               call mrg_x2a_run_mct( cdata_ax(aindex), l2x_ax(aindex), o2x_ax(aindex), xao_ax(aindex), i2x_ax(aindex), fractions_ax(aindex), x2a_ax(aindex) )
+            enddo
+            ! modi end
             call t_drvstopf  ('driver_atmprep_mrgx2a')
 
             if (info_debug > 1) then
                call t_drvstartf ('driver_atmprep_diagav',barrier=mpicom_CPLID)
-               call seq_diag_avect_mct(cdata_ax,x2a_ax,'send atm')
+               !call seq_diag_avect_mct(cdata_ax,x2a_ax,'send atm')
+               ! lihuimin 2011.11.4
+               !call seq_diag_avect_mct(cdata_ax2,x2a_ax2,'send atm2')
+               ! modi end
+               ! lihuimin 2012.5.13, vectroize
+               do aindex = 1,ANUM
+                  call seq_diag_avect_mct(cdata_ax(aindex),x2a_ax(aindex),'send atm')
+               enddo
+               ! modi end
                call t_drvstopf  ('driver_atmprep_diagav')
             endif
          endif  ! atm_prognostic
@@ -2140,7 +3402,21 @@ subroutine ccsm_run()
          if (iamin_CPLATMID .and. atm_prognostic) then
             call t_drvstartf ('DRIVER_C2A',barrier=mpicom_CPLATMID)
             call t_drvstartf ('driver_c2a_atmx2atma',barrier=mpicom_CPLATMID)
-            call map_atmx2atma_mct( cdata_ax, x2a_ax, cdata_aa, x2a_aa)
+            !if (iamin_CPLATMID1) then
+            !   call map_atmx2atma_mct( cdata_ax, x2a_ax, cdata_aa, x2a_aa)
+            !endif
+            !if (iamin_CPLATMID2) then
+            !   ! lihuimin 2011.11.4
+            !   call map_atmx2atma_mct( cdata_ax2, x2a_ax2, cdata_aa2, x2a_aa2)
+            !   ! modi end
+            !endif
+            ! lihuimin 2012.5.13, vectroize
+            do aindex = 1,ANUM
+               if (iamin_CPLATMID_array(aindex)) then
+                  call map_atmx2atma_mct( cdata_ax(aindex), x2a_ax(aindex), cdata_aa(aindex), x2a_aa(aindex))
+               endif
+            enddo
+            ! modi end
             call t_drvstopf  ('driver_c2a_atmx2atma')
             call t_drvstartf ('driver_c2a_infoexch',barrier=mpicom_CPLATMID)
             call seq_infodata_exchange(infodata,CPLATMID,'cpl2atm_run')
@@ -2162,9 +3438,28 @@ subroutine ccsm_run()
          endif
          call t_drvstartf ('DRIVER_ATM_RUN',barrier=mpicom_ATMID)
          if (drv_threading) call seq_comm_setnthreads(nthreads_ATMID)
-         if (atm_prognostic) call mct_avect_vecmult(x2a_aa,drv2mdl_aa,seq_flds_x2a_fluxes)
-         call atm_run_mct( EClock_a, cdata_aa, x2a_aa, a2x_aa)
-         call mct_avect_vecmult(a2x_aa,mdl2drv_aa,seq_flds_a2x_fluxes)
+         ! lihuimin 2011.11.10
+         !if (iamin_ATMID1) then
+         !   if (atm_prognostic) call mct_avect_vecmult(x2a_aa,drv2mdl_aa,seq_flds_x2a_fluxes)
+         !   call atm_run_mct( EClock_a, cdata_aa, x2a_aa, a2x_aa, 1)
+         !   call mct_avect_vecmult(a2x_aa,mdl2drv_aa,seq_flds_a2x_fluxes)
+         !else ! iamin_ATMID2
+         !   ! lihuimin 2011.11.4
+         !   if (atm_prognostic) call mct_avect_vecmult(x2a_aa2,drv2mdl_aa2,seq_flds_x2a_fluxes)
+         !   call atm_run_mct( EClock_a, cdata_aa2, x2a_aa2, a2x_aa2, 2)
+         !   call mct_avect_vecmult(a2x_aa2,mdl2drv_aa2,seq_flds_a2x_fluxes)
+         !   ! modi end
+         !endif
+         ! modi end
+         ! lihuimin 2012.5.13, vectroize
+         do aindex = 1,ANUM
+            if (iamin_ATMID_array(aindex)) then
+               if (atm_prognostic) call mct_avect_vecmult(x2a_aa(aindex),pArray_a(aindex)%drv2mdl_aa,seq_flds_x2a_fluxes)
+               call atm_run_mct( EClock_a, cdata_aa(aindex), x2a_aa(aindex), a2x_aa(aindex), aindex)
+               call mct_avect_vecmult(a2x_aa(aindex),pArray_a(aindex)%mdl2drv_aa,seq_flds_a2x_fluxes)
+            endif
+         enddo
+         ! modi end
          if (drv_threading) call seq_comm_setnthreads(nthreads_GLOID)
          call t_drvstopf  ('DRIVER_ATM_RUN')
       endif
@@ -2233,7 +3528,21 @@ subroutine ccsm_run()
          if (iamin_CPLATMID) then
             call t_drvstartf ('DRIVER_A2C',barrier=mpicom_CPLATMID)
             call t_drvstartf ('driver_a2c_atma2atmx',barrier=mpicom_CPLATMID)
-            call map_atma2atmx_mct( cdata_aa, a2x_aa, cdata_ax, a2x_ax)
+            !if (iamin_CPLATMID1) then
+            !   call map_atma2atmx_mct( cdata_aa, a2x_aa, cdata_ax, a2x_ax)
+            !endif
+            !if (iamin_CPLATMID2) then
+            !   ! lihuimin 2011.11.4
+            !   call map_atma2atmx_mct( cdata_aa2, a2x_aa2, cdata_ax2, a2x_ax2)
+            !   ! modi end
+            !endif
+            ! lihuimin 2012.5.13, vectroize
+            do aindex = 1,ANUM
+               if (iamin_CPLATMID_array(aindex)) then
+                  call map_atma2atmx_mct( cdata_aa(aindex), a2x_aa(aindex), cdata_ax(aindex), a2x_ax(aindex))
+               endif
+            enddo
+            ! modi end
             call t_drvstopf  ('driver_a2c_atma2atmx')
             call t_drvstartf ('driver_a2c_infoexch',barrier=mpicom_CPLATMID)
             call seq_infodata_exchange(infodata,CPLATMID,'atm2cpl_run')
@@ -2246,7 +3555,15 @@ subroutine ccsm_run()
             if (drv_threading) call seq_comm_setnthreads(nthreads_CPLID)
             if (info_debug > 1) then
                call t_drvstartf ('driver_atmpost_diagav',barrier=mpicom_CPLID)
-               call seq_diag_avect_mct(cdata_ax,a2x_ax,'recv atm')
+               !call seq_diag_avect_mct(cdata_ax,a2x_ax,'recv atm')
+               ! lihuimin 2011.11.4
+               !call seq_diag_avect_mct(cdata_ax2,a2x_ax2,'recv atm2')
+               ! modi end
+               ! lihuimin 2012.5.13, vectroize
+               do aindex = 1,ANUM
+                  call seq_diag_avect_mct(cdata_ax(aindex),a2x_ax(aindex),'recv atm')
+               enddo
+               ! modi end
                call t_drvstopf  ('driver_atmpost_diagav')
             endif
             if (drv_threading) call seq_comm_setnthreads(nthreads_GLOID)
@@ -2263,7 +3580,15 @@ subroutine ccsm_run()
       if (iamin_CPLID .and. do_budgets) then
          call t_drvstartf ('DRIVER_BUDGET2',cplrun=.true.,budget=.true.,barrier=mpicom_CPLID)
          if (atm_present) then
-            call seq_diag_atm_mct(dom_ax, fractions_ax, a2x_a=a2x_ax, x2a_a=x2a_ax)
+            !call seq_diag_atm_mct(dom_ax, fractions_ax, a2x_a=a2x_ax, x2a_a=x2a_ax)
+            ! lihuimin 2011.11.4
+            !call seq_diag_atm_mct(dom_ax2, fractions_ax2, a2x_a=a2x_ax2, x2a_a=x2a_ax2)
+            ! modi end
+            ! lihuimin 2012.5.13, vectroize
+            do aindex = 1,ANUM
+               call seq_diag_atm_mct(dom_ax(aindex), fractions_ax(aindex), a2x_a=a2x_ax(aindex), x2a_a=x2a_ax(aindex))
+            enddo
+            ! modi end
          endif
          if (ice_present) then
             call seq_diag_ice_mct(dom_ix, fractions_ix, i2x_i=i2x_ix)
@@ -2334,6 +3659,8 @@ subroutine ccsm_run()
       ! Write history file, only AVs on CPLID
       !----------------------------------------------------------
 
+      ! lihuimin TO_DO CONSIDER
+
       if (iamin_CPLID) then
 
          call t_drvstartf ('DRIVER_HISTORY',cplrun=.true.,barrier=mpicom_CPLID)
@@ -2351,35 +3678,37 @@ subroutine ccsm_run()
             call seq_hist_writeavg(EClock_d,histavg_alarm)
          endif
 
+         ! lihuimin 2012.5.13, all arguments like cdata_ax and a2x_ax are changed
+
          if (do_hist_a2x) then
             if (trim(hist_a2x_flds) == 'all') then
-               call seq_hist_writeaux(EClock_d,'a2x','doma',cdata_ax,a2x_ax,atm_nx,atm_ny,ncpl)
+               call seq_hist_writeaux(EClock_d,'a2x','doma',cdata_ax(1),a2x_ax(1),atm_nx,atm_ny,ncpl)
             else
-               call seq_hist_writeaux(EClock_d,'a2x','doma',cdata_ax,a2x_ax,atm_nx,atm_ny,ncpl,&
+               call seq_hist_writeaux(EClock_d,'a2x','doma',cdata_ax(1),a2x_ax(1),atm_nx,atm_ny,ncpl,&
                                                 flds=hist_a2x_flds)
             endif
          endif
          if (do_hist_a2x3hr) then
             if (trim(hist_a2x3hr_flds) == 'all') then
-               call seq_hist_writeaux(EClock_d,'a2x3h','doma',cdata_ax,a2x_ax,atm_nx,atm_ny,8,t3hr_alarm)
+               call seq_hist_writeaux(EClock_d,'a2x3h','doma',cdata_ax(1),a2x_ax(1),atm_nx,atm_ny,8,t3hr_alarm)
             else
-               call seq_hist_writeaux(EClock_d,'a2x3h','doma',cdata_ax,a2x_ax,atm_nx,atm_ny,8,t3hr_alarm,&
+               call seq_hist_writeaux(EClock_d,'a2x3h','doma',cdata_ax(1),a2x_ax(1),atm_nx,atm_ny,8,t3hr_alarm,&
                                                  flds=hist_a2x3hr_flds)
             end if
          endif
          if (do_hist_a2x3hrp) then
             if (trim(hist_a2x3hrp_flds) == 'all') then
-               call seq_hist_writeaux(EClock_d,'a2x3h_prec','doma',cdata_ax,a2x_ax,atm_nx,atm_ny,8,t3hr_alarm)
+               call seq_hist_writeaux(EClock_d,'a2x3h_prec','doma',cdata_ax(1),a2x_ax(1),atm_nx,atm_ny,8,t3hr_alarm)
             else
-               call seq_hist_writeaux(EClock_d,'a2x3h_prec','doma',cdata_ax,a2x_ax,atm_nx,atm_ny,8,t3hr_alarm,&
+               call seq_hist_writeaux(EClock_d,'a2x3h_prec','doma',cdata_ax(1),a2x_ax(1),atm_nx,atm_ny,8,t3hr_alarm,&
                                               flds=hist_a2x3hrp_flds)
             end if
          endif
          if (do_hist_a2x24hr) then
-            call seq_hist_writeaux(EClock_d,'a2x1d','doma',cdata_ax,a2x_ax,atm_nx,atm_ny,1,t24hr_alarm)
+            call seq_hist_writeaux(EClock_d,'a2x1d','doma',cdata_ax(1),a2x_ax(1),atm_nx,atm_ny,1,t24hr_alarm)
          endif
          if (do_hist_l2x) then
-            call seq_hist_writeaux(EClock_d,'l2x','doml',cdata_lx,l2x_lx,lnd_nx,lnd_ny,ncpl)
+            call seq_hist_writeaux(EClock_d,'l2x','doml',cdata_lx(1),l2x_lx(1),lnd_nx,lnd_ny,ncpl)
          endif
          call t_drvstopf  ('DRIVER_HISTORY',cplrun=.true.)
 
@@ -2472,6 +3801,7 @@ subroutine ccsm_final()
 
    if (iamin_ATMID) then
       if (drv_threading) call seq_comm_setnthreads(nthreads_ATMID)
+      ! lihuimin TO_DO consider if there are things that ignored
       call atm_final_mct( )
       if (drv_threading) call seq_comm_setnthreads(nthreads_GLOID)
    endif
@@ -2825,6 +4155,79 @@ end subroutine ccsm_comp_register
 !===============================================================================
 
 #endif
+
+!-------------------------------------------------------------------------------
+! lihuimin 2011.11.7
+! subroutine for ensemble
+! lihuimin 2012.5.13, vectorize
+!-------------------------------------------------------------------------------
+
+!===============================================================================
+
+subroutine doensemble(av)
+
+  ! INPUT/OUTPUT PARAMETERS
+  type(mct_aVect), dimension(ANUM) ,intent(inout)    :: av
+  !integer, intent(in)               :: num
+
+  ! local
+  integer       ::  npts    ! number of local pts in AV
+  integer       ::  kflds   ! number of fields in AV
+  integer       ::  n,k     ! indices
+  integer,parameter       ::  r16 = selected_real_kind(33)
+  real(selected_real_kind(33))     ::  temp, mul
+
+
+  ! lihuimin 20125.13, vectorize
+  npts = mct_aVect_lsize(av(1))
+  kflds = mct_aVect_nRattr(av(1))
+  mul =  1.0_r16/ANUM
+  temp = 0.0_r16
+
+  do n = 1,npts
+    do k = 1, kflds
+       do aindex = 1,ANUM
+         temp = temp + av(aindex)%rAttr(k,n)*mul
+       enddo
+       av(1)%rAttr(k,n) = temp
+       temp = 0.0_r16
+    enddo
+  enddo
+
+end subroutine doensemble
+
+
+subroutine doensemble_t(av1, av2)
+
+  ! INPUT/OUTPUT PARAMETERS
+  type(mct_aVect), intent(inout)    :: av1
+  type(mct_aVect), intent(in)       :: av2
+  !integer, intent(in)               :: num
+
+  ! local
+  integer       ::  npts    ! number of local pts in AV
+  integer       ::  kflds   ! number of fields in AV
+  integer       ::  n,k     ! indices
+  integer,parameter       ::  r16 = selected_real_kind(33)
+  real(selected_real_kind(33))     ::  temp1, temp2
+
+
+
+  npts = mct_aVect_lsize(av1)
+  kflds = mct_aVect_nRattr(av1)
+
+  do n = 1,npts
+    do k = 1, kflds
+      temp1 = av1%rAttr(k,n)*0.5_r16
+      temp2 = av2%rAttr(k,n)*0.5_r16
+      av1%rAttr(k,n) = temp1 + temp2
+!      av1%rAttr(k,n) = av1%rAttr(k,n)*0.45_r8 + av2%rAttr(k,n)*0.55_r8
+    enddo
+  enddo
+
+end subroutine doensemble_t
+
+
 
 end module ccsm_comp_mod
 
